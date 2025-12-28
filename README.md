@@ -1,7 +1,7 @@
 # translatebot-django
 
 [![Tests](https://github.com/gettranslatebot/translatebot-django/actions/workflows/test.yml/badge.svg)](https://github.com/gettranslatebot/translatebot-django/actions/workflows/test.yml)
-[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/gettranslatebot/translatebot-django)
+[![Coverage](https://codecov.io/gh/gettranslatebot/translatebot-django/graph/badge.svg)](https://codecov.io/gh/gettranslatebot/translatebot-django)
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
 [![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](https://www.python.org/)
 [![Django](https://img.shields.io/badge/django-4.2%20%7C%205.x%20%7C%206.0-green)](https://www.djangoproject.com/)
@@ -310,7 +310,6 @@ This project is licensed under the Mozilla Public License 2.0 - see the [LICENSE
 ## Support
 
 - 🐛 [Issue Tracker](https://github.com/gettranslatebot/translatebot-django/issues)
-- 💬 [Discussions](https://github.com/gettranslatebot/translatebot-django/discussions)
 
 ---
 
