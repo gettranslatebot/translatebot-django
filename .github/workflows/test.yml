@@ -72,15 +72,6 @@ jobs:
         PYTHONPATH: .
       run: |
         pytest -v --cov=translatebot_django --cov-report=xml --cov-report=term
-
-    - name: Coverage comment
-      if: github.event_name == 'pull_request' && matrix.python-version == '3.14' && matrix.django-version == '6'
-      uses: py-cov-action/python-coverage-comment-action@v3
-      with:
-        GITHUB_TOKEN: ${{ github.token }}
-        MINIMUM_GREEN: 80
-        MINIMUM_ORANGE: 60
-
     - name: Upload coverage to Codecov
       if: matrix.python-version == '3.14' && matrix.django-version == '6'
       uses: codecov/codecov-action@v5
