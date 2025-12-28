@@ -80,3 +80,10 @@ jobs:
         GITHUB_TOKEN: ${{ github.token }}
         MINIMUM_GREEN: 80
         MINIMUM_ORANGE: 60
+
+    - name: Upload coverage to Codecov
+      if: matrix.python-version == '3.14' && matrix.django-version == '6'
+      uses: codecov/codecov-action@v5
+      with:
+        files: ./coverage.xml
+        fail_ci_if_error: false
