@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "translatebot-django"
-version = "0.1.1"
+version = "0.1.2"
 description = "Automatic AI-powered translations for Django .po files."
 authors = [
   { name = "Bjorn the Builder", email = "bjornthebuilder@proton.me" }
@@ -43,6 +43,7 @@ dependencies = [
 Homepage = "https://translatebot.dev"
 Repository = "https://github.com/gettranslatebot/translatebot-django"
 Issues = "https://github.com/gettranslatebot/translatebot-django/issues"
+Changelog = "https://github.com/gettranslatebot/translatebot-django/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
