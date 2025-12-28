@@ -26,6 +26,12 @@ Translate your Django application's gettext messages automatically using state-o
 pip install translatebot-django
 ```
 
+Or with poetry:
+
+```bash
+poetry add translatebot-django
+```
+
 Or with uv:
 
 ```bash
