@@ -125,6 +125,10 @@ class Command(BaseCommand):
 
         if group_candidate:
             groups.append(group_candidate)
+
+        self.stdout.write(f"ℹ️  Found {len(all_msgids)} untranslated entries")
+        self.stdout.write(f"🔄 Translating with {model}...")
+
         msgid_to_translation = {}
         for group in groups:
             translated = translate_text(
@@ -144,8 +148,7 @@ class Command(BaseCommand):
             for entry in po:
                 if entry.msgid in msgid_to_translation:
                     translation = msgid_to_translation[entry.msgid]
-                    self.stdout.write(f"  {entry.msgid[:50]}...")
-                    self.stdout.write(self.style.SUCCESS(f"  → {translation[:50]}..."))
+                    self.stdout.write(f"✓ Translated '{entry.msgid[:50]}'")
                     if not dry_run:
                         entry.msgstr = translation
                         changed += 1
@@ -153,9 +156,7 @@ class Command(BaseCommand):
             if not dry_run and changed > 0:
                 po.save(str(po_path))
                 self.stdout.write(
-                    self.style.SUCCESS(
-                        f"✓ Saved {changed} updated entries to {po_path}"
-                    )
+                    self.style.SUCCESS(f"✨ Successfully updated {po_path}")
                 )
             else:
                 self.stdout.write(
@@ -170,7 +171,7 @@ class Command(BaseCommand):
         if not dry_run:
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"✓ Successfully translated {total_changed} entries "
+                    f"✨ Successfully translated {total_changed} entries "
                     f"across {len(po_paths)} file(s)"
                 )
             )
