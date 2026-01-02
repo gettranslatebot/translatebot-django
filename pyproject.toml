@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "translatebot-django"
-version = "0.1.4"
+version = "0.2.0"
 description = "Automatic AI-powered translations for Django .po files."
 authors = [
   { name = "Bjorn the Builder", email = "bjornthebuilder@proton.me" }
@@ -52,6 +52,10 @@ dev = [
   "pytest-mock>=3.10.0",
   "pytest-cov>=4.0.0",
   "ruff>=0.8.0",
+  "django-modeltranslation>=0.18",
+]
+modeltranslation = [
+  "django-modeltranslation>=0.18",
 ]
 
 [tool.setuptools]

@@ -665,6 +665,41 @@ wheels = [
 ]
 
 [[package]]
+name = "django-modeltranslation"
+version = "0.19.17"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.10'",
+]
+dependencies = [
+    { name = "django", version = "4.2.27", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.10'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a7/32/34f33d0a375087197e1e7b6e27a87332c3dfaa970cb38ec353b6198b855b/django_modeltranslation-0.19.17.tar.gz", hash = "sha256:13bd9cab4e4aed0bef5624c17a7da2ac8c5538f0650adbd89ce8c878cbef02fd", size = 77741, upload-time = "2025-09-14T10:14:36.05Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/83/87/f8cf0626e502fd6fd996b8dc590985ed5002b63dfb4442f954670bd101b7/django_modeltranslation-0.19.17-py3-none-any.whl", hash = "sha256:fda198c08b4ede0c2fd09b795ab420a04c7b5a868315fdf4aade0d0a526c269f", size = 93423, upload-time = "2025-09-14T10:14:34.536Z" },
+]
+
+[[package]]
+name = "django-modeltranslation"
+version = "0.19.19"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14'",
+    "python_full_version >= '3.12' and python_full_version < '3.14'",
+    "python_full_version >= '3.10' and python_full_version < '3.12'",
+]
+dependencies = [
+    { name = "django", version = "5.2.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10' and python_full_version < '3.12'" },
+    { name = "django", version = "6.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "typing-extensions", marker = "python_full_version >= '3.10'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c1/af/3c34fca94fccae681a15734bc6557cf9be958d1d063ddbb233580b894054/django_modeltranslation-0.19.19.tar.gz", hash = "sha256:26dd8454f19540a2eb05e303608a2d89dd80aacb75ab95f8ea272cf4324d2644", size = 77750, upload-time = "2025-12-15T10:25:38.112Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a7/2a/fdf265e91e37ee363b2c45f3d2a01752a3b38ab082a3ec0b0677105bd367/django_modeltranslation-0.19.19-py3-none-any.whl", hash = "sha256:55ac2ce47486b9e8ca18b155f7705170a53b7e1346bf7bf89304e99787486e8f", size = 93441, upload-time = "2025-12-15T10:25:35.942Z" },
+]
+
+[[package]]
 name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2808,7 +2843,7 @@ wheels = [
 
 [[package]]
 name = "translatebot-django"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "django", version = "4.2.27", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
@@ -2820,6 +2855,8 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "django-modeltranslation", version = "0.19.17", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "django-modeltranslation", version = "0.19.19", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "pytest", version = "8.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "pytest", version = "9.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "pytest-cov" },
@@ -2827,10 +2864,16 @@ dev = [
     { name = "pytest-mock" },
     { name = "ruff" },
 ]
+modeltranslation = [
+    { name = "django-modeltranslation", version = "0.19.17", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "django-modeltranslation", version = "0.19.19", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "django", specifier = ">=4.2" },
+    { name = "django-modeltranslation", marker = "extra == 'dev'", specifier = ">=0.18" },
+    { name = "django-modeltranslation", marker = "extra == 'modeltranslation'", specifier = ">=0.18" },
     { name = "litellm", specifier = ">=1.80.0" },
     { name = "polib", specifier = ">=1.2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
@@ -2839,7 +2882,7 @@ requires-dist = [
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.10.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "modeltranslation"]
 
 [[package]]
 name = "typer-slim"
