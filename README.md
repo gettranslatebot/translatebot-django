@@ -6,12 +6,13 @@
 
 Automatic AI-powered translations for Django `.po` files using the power of LLMs.
 
-Translate your Django application's gettext messages automatically using state-of-the-art language models from OpenAI, Anthropic, Google, and many other providers.
+Translate your Django application's gettext messages and model field content automatically using state-of-the-art language models from OpenAI, Anthropic, Google, and many other providers.
 
 ## Features
 
 - 🤖 **Multiple AI Providers**: Supports OpenAI, Anthropic Claude, Google Gemini, Azure OpenAI, and [many more models](https://docs.litellm.ai/docs/providers) via LiteLLM
 - 🎯 **Smart Translation**: Preserves placeholders (`%(name)s`, `{0}`, `%s`) and HTML tags
+- 🗄️ **Model Field Translation**: Supports [django-modeltranslation](https://github.com/deschler/django-modeltranslation) for translating database content
 - ⚙️ **Flexible Configuration**: Django settings, environment variables, or command-line arguments
 - 🔄 **Selective Translation**: Only translate empty entries or force re-translate all, saving costs
 - 🧪 **Dry Run Mode**: Preview translations before applying them
@@ -50,6 +51,14 @@ INSTALLED_APPS = [
 # Configure API key and model
 TRANSLATEBOT_API_KEY = os.getenv("your-api-key-here")
 TRANSLATEBOT_MODEL = "gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
+
+# Optional: Define languages for automatic translation
+LANGUAGES = [
+    ('en', 'English'),
+    ('de', 'German'),
+    ('fr', 'French'),
+    ('nl', 'Dutch'),
+]
 ```
 
 2. **Generate your `.po` files** (if you haven't already):
@@ -63,7 +72,11 @@ python manage.py makemessages -l nl  # Dutch
 3. **Translate automatically:**
 
 ```bash
+# Translate to a specific language
 python manage.py translate --target-lang nl
+
+# Or translate to all configured LANGUAGES at once (if LANGUAGES is defined)
+python manage.py translate
 ```
 
 4. **Compile the translations:**
@@ -91,13 +104,14 @@ TRANSLATEBOT_MODEL = "gpt-4o-mini"
 ### Basic Usage
 
 ```bash
-# Translate to French
+# Translate to a specific language
 python manage.py translate --target-lang fr
 
-# Translate to German
-python manage.py translate --target-lang de
+# Translate to all configured LANGUAGES at once (if LANGUAGES is defined in settings)
+python manage.py translate
 
-# Translate to Dutch
+# Translate multiple specific languages
+python manage.py translate --target-lang de
 python manage.py translate --target-lang nl
 ```
 
@@ -114,13 +128,103 @@ python manage.py translate --target-lang nl --overwrite
 python manage.py translate --target-lang nl
 ```
 
+### Model Field Translation (django-modeltranslation)
+
+If you're using [django-modeltranslation](https://github.com/deschler/django-modeltranslation) to translate model fields, translatebot-django can automatically translate your database content too!
+
+#### Installation
+
+```bash
+# Install with modeltranslation support
+uv add translatebot-django[modeltranslation]
+
+# Or install django-modeltranslation separately
+uv add django-modeltranslation
+```
+
+#### Setup
+
+```python
+# settings.py
+INSTALLED_APPS = [
+    'modeltranslation',  # Must be before django.contrib.admin
+    'translatebot_django',
+    # ...
+]
+```
+
+Register your models for translation:
+
+```python
+# myapp/translation.py
+from modeltranslation.translator import register, TranslationOptions
+from .models import Article
+
+@register(Article)
+class ArticleTranslationOptions(TranslationOptions):
+    fields = ('title', 'content', 'description')
+```
+
+#### Usage
+
+```bash
+# Translate all registered model fields
+python manage.py translate --target-lang nl --models
+
+# Translate specific models only
+python manage.py translate --target-lang de --models Article Product
+
+# Preview without saving to database
+python manage.py translate --target-lang fr --models --dry-run
+
+# Re-translate existing content
+python manage.py translate --target-lang de --models --overwrite
+```
+
+#### How It Works
+
+1. Discovers all models registered with django-modeltranslation
+2. Finds fields that need translation (empty target language fields by default)
+3. Translates content from the base field to target language field
+4. Updates the database using efficient bulk operations
+5. Supports dry-run mode to preview before committing changes
+
+#### Example
+
+```python
+# models.py
+class Article(models.Model):
+    title = models.CharField(max_length=200)
+    content = models.TextField()
+    published = models.DateTimeField(auto_now_add=True)
+
+# translation.py
+@register(Article)
+class ArticleTranslationOptions(TranslationOptions):
+    fields = ('title', 'content')
+```
+
+After running migrations, django-modeltranslation creates additional fields:
+- `title`, `title_de`, `title_nl`, `title_en`
+- `content`, `content_de`, `content_nl`, `content_en`
+
+Translate to German:
+```bash
+python manage.py translate --target-lang de --models Article
+```
+
 ### Command Options
 
-| Option          | Description                     | Default |
-| --------------- | ------------------------------- | ------- |
-| `--target-lang` | Target language code (required) | -       |
-| `--dry-run`     | Preview without saving          | `False` |
-| `--overwrite`   | Re-translate existing entries   | `False` |
+| Option          | Description                                                                                      | Default |
+| --------------- | ------------------------------------------------------------------------------------------------ | ------- |
+| `--target-lang` | Target language code. Required unless `LANGUAGES` is defined in settings.                        | -       |
+| `--dry-run`     | Preview without saving                                                                           | `False` |
+| `--overwrite`   | Re-translate existing entries                                                                    | `False` |
+| `--models`      | Translate model fields (only available with django-modeltranslation installed)                   | -       |
+
+**Notes:**
+- If you define `LANGUAGES` in your Django settings, `--target-lang` becomes optional. Without it, the command will translate to all configured languages.
+- The `--models` option is only available when django-modeltranslation is installed and configured.
 
 ## Supported Models
 
@@ -135,15 +239,17 @@ TRANSLATEBOT_MODEL = "gpt-4-turbo"      # Good balance
 
 ### Anthropic Claude
 ```python
-TRANSLATEBOT_MODEL = "claude-3-5-sonnet-20241022"  # Best quality
-TRANSLATEBOT_MODEL = "claude-3-5-haiku-20241022"   # Fast and cheap
-TRANSLATEBOT_MODEL = "claude-3-opus-20240229"      # Most capable
+TRANSLATEBOT_MODEL = "claude-sonnet-4-5-20250929"  # Latest Sonnet (recommended)
+TRANSLATEBOT_MODEL = "claude-opus-4-5-20251101"    # Latest Opus (most capable)
+TRANSLATEBOT_MODEL = "claude-3-5-sonnet-20240620"  # Claude 3.5 Sonnet
+TRANSLATEBOT_MODEL = "claude-3-haiku-20240307"     # Fast and cheap
 ```
 
-### Google
+### Google Gemini
+
 ```python
-TRANSLATEBOT_MODEL = "gemini/gemini-1.5-pro"
-TRANSLATEBOT_MODEL = "gemini/gemini-1.5-flash"
+TRANSLATEBOT_MODEL = "gemini/gemini-2.5-flash"  # Latest Flash (recommended)
+TRANSLATEBOT_MODEL = "gemini/gemini-3-flash-preview"  # Gemini 3 Preview
 ```
 
 ### Azure OpenAI
@@ -175,18 +281,28 @@ def my_view(request):
     message = _("Welcome to %(site_name)s!")
     # ...
 
-# 2. Generate .po files
+# 2. Configure your languages in settings.py
+LANGUAGES = [
+    ('en', 'English'),
+    ('fr', 'French'),
+    ('de', 'German'),
+    ('nl', 'Dutch'),
+]
+
+# 3. Generate .po files
 python manage.py makemessages -l fr -l de -l nl
 
-# 3. Translate automatically
+# 4. Translate automatically to all languages at once
+python manage.py translate
+
+# Or translate to specific languages
 python manage.py translate --target-lang fr
 python manage.py translate --target-lang de
-python manage.py translate --target-lang nl
 
-# 4. Compile messages
+# 5. Compile messages
 python manage.py compilemessages
 
-# 5. Your app is now multilingual! 🎉
+# 6. Your app is now multilingual! 🎉
 ```
 
 ## Development

@@ -7,12 +7,7 @@ from django.core.management.base import CommandError
 
 def get_model():
     """Get default model from the Django settings or use fallback."""
-    model = getattr(settings, "TRANSLATEBOT_MODEL", None)
-
-    if model is None:
-        raise CommandError(
-            "Model is not configured. Set TRANSLATEBOT_MODEL in the Django settings."
-        )
+    model = getattr(settings, "TRANSLATEBOT_MODEL", "gpt-4o-mini")
     return model
 
 
@@ -97,3 +92,23 @@ def get_all_po_paths(target_lang):
         )
 
     return po_paths
+
+
+def is_modeltranslation_available():
+    """Check if django-modeltranslation is installed and configured."""
+    try:
+        import modeltranslation  # noqa: F401
+
+        return "modeltranslation" in settings.INSTALLED_APPS
+    except ImportError:
+        return False
+
+
+def get_modeltranslation_translator():
+    """Get the modeltranslation translator registry if available."""
+    if not is_modeltranslation_available():
+        return None
+
+    from modeltranslation.translator import translator
+
+    return translator
