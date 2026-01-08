@@ -279,7 +279,7 @@ class Command(BaseCommand):
                         api_key=api_key,
                         model=model,
                     )
-                    for msgid, translation in zip(group, translated):
+                    for msgid, translation in zip(group, translated, strict=True):
                         msgid_to_translation[msgid] = translation
             except AuthenticationError as e:
                 raise CommandError(
@@ -437,7 +437,8 @@ class Command(BaseCommand):
                     )
 
                     # Prepare translation items for this group
-                    for item, translation in zip(items_group, translations):
+                    pairs = zip(items_group, translations, strict=True)
+                    for item, translation in pairs:
                         translation_items.append(
                             {
                                 "instance": item["instance"],

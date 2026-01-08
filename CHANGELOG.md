@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-01-09
+
+### Changed
+
+- Dropped Python 3.9 support to fix filelock security vulnerability
+- Simplified README and added links to documentation at translatebot.dev/docs
+- Updated litellm from 1.80.11 to 1.80.12
+- Updated ruff from 0.14.10 to 0.14.11
+
+### Security
+
+- Updated filelock to 3.20.1+ to fix Time-of-Check-Time-of-Use (TOCTOU) race condition vulnerability that allowed local attackers to corrupt or truncate arbitrary user files through symlink attacks
+
+### Infrastructure
+
+- Bumped actions/checkout from 4 to 6
+- Bumped actions/setup-python from 5 to 6
+
 ## [0.2.2] - 2026-01-06
 
 ### Changed
@@ -98,6 +116,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[0.3.0]: https://github.com/gettranslatebot/translatebot-django/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/gettranslatebot/translatebot-django/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/gettranslatebot/translatebot-django/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/gettranslatebot/translatebot-django/compare/v0.1.4...v0.2.0

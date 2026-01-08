@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "translatebot-django"
-version = "0.2.2"
+version = "0.3.0"
 description = "Automatic AI-powered translations for Django .po files."
 authors = [
   { name = "Bjorn the Builder" },
@@ -12,7 +12,7 @@ authors = [
 ]
 readme = "README.md"
 license = { text = "MPL-2.0" }
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Framework :: Django",
@@ -24,7 +24,6 @@ classifiers = [
   "Intended Audience :: Developers",
   "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -92,8 +91,8 @@ exclude_lines = [
 ]
 
 [tool.ruff]
-# Target Python 3.9+
-target-version = "py39"
+# Target Python 3.10+
+target-version = "py310"
 
 # Include source and test files
 src = ["src", "tests"]
