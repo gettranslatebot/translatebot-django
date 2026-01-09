@@ -42,7 +42,7 @@ python manage.py translate --target-lang nl --dry-run
 
 ## Documentation
 
-For full documentation, visit **[translatebot.dev/docs](https://translatebot.dev/docs)**
+For full documentation, visit **[translatebot.dev/docs](https://translatebot.dev/docs/)**
 
 - [Installation](https://translatebot.dev/docs/getting-started/installation)
 - [Configuration](https://translatebot.dev/docs/getting-started/configuration)
