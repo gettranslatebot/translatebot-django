@@ -6,6 +6,8 @@
 
 **Stop copy-pasting to and from Google Translate.** Translate your Django `.po` files automatically with AI.
 
+Documentation: **[https://translatebot.dev/docs/](https://translatebot.dev/docs/)**
+
 ## The Problem
 
 Maintaining translations in Django is painful:
@@ -59,7 +61,7 @@ python manage.py translate --target-lang nl --dry-run
 
 ## Documentation
 
-For full documentation, visit **[translatebot.dev/docs](https://translatebot.dev/docs/)**
+For full documentation, visit **[translatebot.dev/docs/](https://translatebot.dev/docs/)**
 
 - [Installation](https://translatebot.dev/docs/getting-started/installation)
 - [Configuration](https://translatebot.dev/docs/getting-started/configuration)

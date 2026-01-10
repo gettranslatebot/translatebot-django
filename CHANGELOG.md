@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-01-10
+
+### Changed
+
+- Updated PyPI homepage link to point to GitHub repository
+- Updated documentation link to use translatebot.dev/docs/
+- Updated changelog link to point to GitHub CHANGELOG.md
+- Added documentation link to top of README
+
 ## [0.3.3] - 2026-01-10
 
 ### Changed
@@ -136,6 +145,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[0.3.4]: https://github.com/gettranslatebot/translatebot-django/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/gettranslatebot/translatebot-django/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/gettranslatebot/translatebot-django/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/gettranslatebot/translatebot-django/compare/v0.3.0...v0.3.1
