@@ -1,4 +1,5 @@
 import json
+import re
 
 import polib
 import tiktoken
@@ -72,6 +73,9 @@ def translate_text(text, target_lang, model, api_key):
     content = content.strip()
     if not content:
         raise ValueError(f"API returned empty content after stripping. Model: {model}")
+
+    # Strip markdown code blocks if present (some models wrap JSON in ```json ... ```)
+    content = re.sub(r"^```\w*\n?(.*?)\n?```$", r"\1", content, flags=re.DOTALL).strip()
 
     try:
         translated = json.loads(content)
