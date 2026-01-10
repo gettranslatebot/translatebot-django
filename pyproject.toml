@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "translatebot-django"
-version = "0.3.2"
+version = "0.3.3"
 description = "Stop copy-pasting to and from Google Translate. Translate your Django .po files automatically with AI."
 authors = [
   { name = "Bjorn the Builder" },
@@ -40,11 +40,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://translatebot.dev"
-Documentation = "https://translatebot.dev/docs/"
-Repository = "https://github.com/gettranslatebot/translatebot-django"
-Issues = "https://github.com/gettranslatebot/translatebot-django/issues"
-Changelog = "https://github.com/gettranslatebot/translatebot-django/blob/main/CHANGELOG.md"
+homepage = "https://translatebot.dev"
+documentation = "https://docs.translatebot.dev"
+repository = "https://github.com/gettranslatebot/translatebot-django"
+issues = "https://github.com/gettranslatebot/translatebot-django/issues"
+changelog = "https://translatebot.dev/docs/changelog/"
 
 [project.optional-dependencies]
 dev = [
