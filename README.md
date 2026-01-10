@@ -10,7 +10,7 @@
 
 Maintaining translations in Django is painful:
 
-- Opening `.po` files, copying to Google Translate, pasting back — repeat 200 times
+- Opening `.po` files, copying to Google Translate, pasting back - repeat 200 times
 - Placeholders like `%(username)s` get mangled and crash your app
 - Source strings change, but which translations are stale? Good luck tracking that
 - Hours spent on translations instead of building features
