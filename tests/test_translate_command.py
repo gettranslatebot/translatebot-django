@@ -200,10 +200,10 @@ def test_translate_text_batch(mocker):
     mock_completion.assert_called_once()
 
 
-def test_translate_text_strips_markdown_code_blocks(mocker):
-    """Test that markdown code blocks are stripped from API responses."""
+def test_translate_text_extracts_json_from_preamble(mocker):
+    """Test that JSON is extracted when LLM adds preamble text."""
     mock_response = mocker.MagicMock()
-    mock_response.choices[0].message.content = '```json\n["Hallo, wereld!"]\n```'
+    mock_response.choices[0].message.content = 'Preamble text:\n["Hallo, wereld!"]'
 
     mock_completion = mocker.patch(
         "translatebot_django.management.commands.translate.completion"
@@ -215,10 +215,10 @@ def test_translate_text_strips_markdown_code_blocks(mocker):
     assert result == ["Hallo, wereld!"]
 
 
-def test_translate_text_strips_markdown_code_blocks_no_lang(mocker):
-    """Test that markdown code blocks without language tag are stripped."""
+def test_translate_text_extracts_json_from_code_block(mocker):
+    """Test that JSON is extracted from markdown code blocks."""
     mock_response = mocker.MagicMock()
-    mock_response.choices[0].message.content = '```\n["Hallo"]\n```'
+    mock_response.choices[0].message.content = '```json\n["Hallo"]\n```'
 
     mock_completion = mocker.patch(
         "translatebot_django.management.commands.translate.completion"
