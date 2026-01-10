@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](https://www.python.org/) [![Django](https://img.shields.io/badge/django-4.2%20%7C%205.x%20%7C%206.0-green)](https://www.djangoproject.com/)
 
-**Stop the tedious copy-paste workflow.** Translate your Django `.po` files automatically with AI.
+**Stop copy-pasting to and from Google Translate.** Translate your Django `.po` files automatically with AI.
 
 ## The Problem
 
@@ -12,7 +12,7 @@ Maintaining translations in Django is painful:
 
 - Opening `.po` files, copying to Google Translate, pasting back - repeat 200 times
 - Placeholders like `%(username)s` get mangled and crash your app
-- Source strings change, but which translations are stale? Good luck tracking that
+- Source strings change, and now you need to update .po files for all 10 languages
 - Hours spent on translations instead of building features
 
 ## The Solution
