@@ -200,6 +200,36 @@ def test_translate_text_batch(mocker):
     mock_completion.assert_called_once()
 
 
+def test_translate_text_strips_markdown_code_blocks(mocker):
+    """Test that markdown code blocks are stripped from API responses."""
+    mock_response = mocker.MagicMock()
+    mock_response.choices[0].message.content = '```json\n["Hallo, wereld!"]\n```'
+
+    mock_completion = mocker.patch(
+        "translatebot_django.management.commands.translate.completion"
+    )
+    mock_completion.return_value = mock_response
+
+    result = translate_text(["Hello, world!"], "nl", "gpt-4o-mini", "test-api-key")
+
+    assert result == ["Hallo, wereld!"]
+
+
+def test_translate_text_strips_markdown_code_blocks_no_lang(mocker):
+    """Test that markdown code blocks without language tag are stripped."""
+    mock_response = mocker.MagicMock()
+    mock_response.choices[0].message.content = '```\n["Hallo"]\n```'
+
+    mock_completion = mocker.patch(
+        "translatebot_django.management.commands.translate.completion"
+    )
+    mock_completion.return_value = mock_response
+
+    result = translate_text(["Hello"], "nl", "gpt-4o-mini", "test-api-key")
+
+    assert result == ["Hallo"]
+
+
 def test_command_requires_target_lang(settings):
     """Test that command requires --target-lang when LANGUAGES is not defined."""
     # Ensure LANGUAGES is not defined
