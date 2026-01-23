@@ -76,6 +76,39 @@ def test_get_all_po_paths_finds_files_in_locale_paths(temp_locale_dir):
     assert po_path in paths
 
 
+def test_get_all_po_paths_converts_language_code_to_locale(temp_locale_dir):
+    """Test that get_all_po_paths converts language codes to locale names.
+
+    Django's LANGUAGES setting uses language codes (e.g., 'zh-hans') but locale
+    directories use locale names (e.g., 'zh_Hans'). This test verifies that the
+    function correctly converts between these formats.
+    """
+    # Create directory with locale name format (zh_Hans), not language code (zh-hans)
+    zh_hans_dir = temp_locale_dir / "zh_Hans" / "LC_MESSAGES"
+    zh_hans_dir.mkdir(parents=True)
+    po_path = zh_hans_dir / "django.po"
+    po_path.write_text("")
+
+    # Pass language code format (zh-hans), should find file in zh_Hans directory
+    paths = get_all_po_paths("zh-hans")
+    assert len(paths) >= 1
+    assert po_path in paths
+
+
+def test_get_all_po_paths_converts_pt_br_to_pt_BR(temp_locale_dir):
+    """Test that get_all_po_paths converts pt-br to pt_BR locale directory."""
+    # Create directory with locale name format (pt_BR)
+    pt_br_dir = temp_locale_dir / "pt_BR" / "LC_MESSAGES"
+    pt_br_dir.mkdir(parents=True)
+    po_path = pt_br_dir / "django.po"
+    po_path.write_text("")
+
+    # Pass language code format (pt-br), should find file in pt_BR directory
+    paths = get_all_po_paths("pt-br")
+    assert len(paths) >= 1
+    assert po_path in paths
+
+
 @pytest.mark.usefixtures("temp_locale_dir")
 def test_get_all_po_paths_raises_error_when_not_found():
     """Test that get_all_po_paths raises error when no files found."""
