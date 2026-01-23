@@ -100,7 +100,8 @@ def gather_strings(po_path, only_empty=True):
         if not entry.msgid or entry.obsolete:
             continue
 
-        if entry.msgstr and not only_empty:
+        # Skip entries with translations unless they're fuzzy or only_empty is True
+        if entry.msgstr and not only_empty and not entry.fuzzy:
             continue
 
         ret.append(entry.msgid)
@@ -311,6 +312,9 @@ class Command(BaseCommand):
                     else:
                         self.stdout.write(f"✓ Translated '{entry.msgid[:50]}'")
                         entry.msgstr = translation
+                        # Clear fuzzy flag since we have a fresh translation
+                        if entry.fuzzy:
+                            entry.flags.remove("fuzzy")
                     changed += 1
 
             if not dry_run and changed > 0:
