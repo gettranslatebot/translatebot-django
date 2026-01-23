@@ -1,4 +1,5 @@
 import json
+from contextlib import contextmanager
 
 import polib
 import tiktoken
@@ -13,6 +14,29 @@ from translatebot_django.utils import (
     get_model,
     is_modeltranslation_available,
 )
+
+
+@contextmanager
+def handle_api_errors():
+    """Context manager for handling API errors with user-friendly messages."""
+    try:
+        yield
+    except AuthenticationError as e:
+        raise CommandError(
+            f"Authentication failed: {str(e)}\n"
+            "Please check your API key configuration.\n"
+            "Set TRANSLATEBOT_API_KEY in settings or "
+            "TRANSLATEBOT_API_KEY environment variable."
+        ) from e
+    except BadRequestError as e:
+        error_str = str(e).lower()
+        if "credit balance" in error_str or "billing" in error_str:
+            raise CommandError(
+                "Insufficient API credits. Your credit balance is too low "
+                "to access the API.\n"
+                "Please visit your API provider's billing page to add credits."
+            ) from e
+        raise CommandError(f"API request failed: {str(e)}") from e
 
 
 def get_token_count(text):
@@ -278,7 +302,7 @@ class Command(BaseCommand):
                 for msgid in group:
                     msgid_to_translation[msgid] = ""
         else:
-            try:
+            with handle_api_errors():
                 for group in groups:
                     translated = translate_text(
                         text=group,
@@ -288,22 +312,6 @@ class Command(BaseCommand):
                     )
                     for msgid, translation in zip(group, translated, strict=True):
                         msgid_to_translation[msgid] = translation
-            except AuthenticationError as e:
-                raise CommandError(
-                    f"Authentication failed: {str(e)}\n"
-                    "Please check your API key configuration.\n"
-                    "Set TRANSLATEBOT_API_KEY in settings or "
-                    "TRANSLATEBOT_API_KEY environment variable."
-                ) from e
-            except BadRequestError as e:
-                error_str = str(e).lower()
-                if "credit balance" in error_str or "billing" in error_str:
-                    raise CommandError(
-                        "Insufficient API credits. Your credit balance is too low "
-                        "to access the API.\n"
-                        "Please visit your API provider's billing page to add credits."
-                    ) from e
-                raise CommandError(f"API request failed: {str(e)}") from e
 
         # Now we have all the msgid -> translation mappings, we can proceed
         # with putting them into the .po files
@@ -449,7 +457,7 @@ class Command(BaseCommand):
             )
 
             translation_items = []
-            try:
+            with handle_api_errors():
                 for texts_group, items_group in groups:
                     translations = translate_text(
                         texts_group, target_lang, model, api_key
@@ -476,22 +484,6 @@ class Command(BaseCommand):
                             f"✓ {model_name}.{field_name}: "
                             f"'{source_preview}' → '{translation_preview}'"
                         )
-            except AuthenticationError as e:
-                raise CommandError(
-                    f"Authentication failed: {str(e)}\n"
-                    "Please check your API key configuration.\n"
-                    "Set TRANSLATEBOT_API_KEY in settings or "
-                    "TRANSLATEBOT_API_KEY environment variable."
-                ) from e
-            except BadRequestError as e:
-                error_str = str(e).lower()
-                if "credit balance" in error_str or "billing" in error_str:
-                    raise CommandError(
-                        "Insufficient API credits. Your credit balance is too low "
-                        "to access the API.\n"
-                        "Please visit your API provider's billing page to add credits."
-                    ) from e
-                raise CommandError(f"API request failed: {str(e)}") from e
 
         # Apply translations
         updated = backend.apply_translations(translation_items, dry_run=dry_run)
