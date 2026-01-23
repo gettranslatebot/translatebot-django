@@ -392,6 +392,32 @@ def test_command_skips_obsolete_entries(temp_locale_dir, mocker):
     mock_comp.assert_not_called()
 
 
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_command_translates_fuzzy_entries(temp_locale_dir, mock_completion):
+    """Test that fuzzy entries are re-translated and fuzzy flag is cleared."""
+    test_lang = temp_locale_dir / "test" / "LC_MESSAGES"
+    test_lang.mkdir(parents=True)
+    po_path = test_lang / "django.po"
+
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    # Create a fuzzy entry with an old translation
+    fuzzy_entry = polib.POEntry(msgid="Smart Context", msgstr="Old translation")
+    fuzzy_entry.flags.append("fuzzy")
+    po.append(fuzzy_entry)
+    po.save(str(po_path))
+
+    mock_completion("Slimme Context")
+
+    call_command("translate", target_lang="test")
+
+    # Reload and verify
+    po = polib.pofile(str(po_path))
+    entry = [e for e in po if e.msgid == "Smart Context"][0]
+    assert entry.msgstr == "Slimme Context"
+    assert not entry.fuzzy, "Fuzzy flag should be cleared after translation"
+
+
 @pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
 def test_command_output_messages(sample_po_file, mock_completion):
     """Test that command outputs appropriate messages."""
