@@ -49,28 +49,31 @@ def get_token_count(text):
 SYSTEM_PROMPT = (
     "You are a professional software localization translator.\n"
     "Important rules:\n"
-    "- The input format is JSON. The output format must be JSON as well.\n"
-    "- Preserve all placeholders like %(name)s, {name}, {0}, %s.\n"
+    "- The input is a JSON array of strings. The output MUST be a JSON array.\n"
+    "- CRITICAL: The output array MUST have EXACTLY the same number of elements "
+    "as the input array. Each input string at index N must have its translation "
+    "at index N in the output. Never skip, merge, or omit any strings.\n"
+    "- Preserve all placeholders like %(name)s, {name}, {0}, %s exactly as-is.\n"
     "- Preserve HTML tags exactly as they are.\n"
     "- Preserve line breaks (\\n) in the text.\n"
     "- Do not change the order of the strings.\n"
-    "- Return ONLY the translated strings as a JSON array.\n"
-    "- Do NOT wrap the JSON in markdown code blocks (```json). Return raw JSON only."
+    "- Return ONLY the JSON array of translated strings, nothing else.\n"
+    "- Do NOT wrap the JSON in markdown code blocks. Return raw JSON only."
 )
 SYSTEM_PROMPT_LENGTH = get_token_count(SYSTEM_PROMPT)
 
 
-def create_preaamble(target_lang):
+def create_preamble(target_lang, count):
     return (
-        f"Translate the following array of strings to the language {target_lang}"
-        " and return ONLY a JSON array:\n"
+        f"Translate the following {count} strings to {target_lang}. "
+        f"Return a JSON array with exactly {count} translated strings:\n"
     )
 
 
 def translate_text(text, target_lang, model, api_key):
     """Translate text by calling LiteLLM."""
     # Preserve leading/trailing newlines for proper .po file formatting
-    preamble = create_preaamble(target_lang)
+    preamble = create_preamble(target_lang, len(text))
     response = completion(
         model=model,
         messages=[
@@ -279,7 +282,8 @@ class Command(BaseCommand):
 
             total = get_token_count(json.dumps(group_candidate, ensure_ascii=False))
             output_tokens_estimate = total * 1.3
-            preamble_length = get_token_count(create_preaamble(target_lang))
+            preamble = create_preamble(target_lang, len(group_candidate))
+            preamble_length = get_token_count(preamble)
 
             if total + preamble_length + output_tokens_estimate > get_max_tokens(model):
                 groups.append(group_candidate)
@@ -424,7 +428,8 @@ class Command(BaseCommand):
 
             total = get_token_count(json.dumps(group_candidate, ensure_ascii=False))
             output_tokens_estimate = total * 1.3
-            preamble_length = get_token_count(create_preaamble(target_lang))
+            preamble = create_preamble(target_lang, len(group_candidate))
+            preamble_length = get_token_count(preamble)
 
             if total + preamble_length + output_tokens_estimate > get_max_tokens(model):
                 # Group is full, save it and start a new one
