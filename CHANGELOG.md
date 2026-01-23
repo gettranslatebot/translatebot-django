@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.10] - 2026-01-23
+
+### Added
+
+- Added automatic retry with exponential backoff for rate limit errors (429). Retries up to 5 times with delays of 60s, 120s, 240s, 480s.
+
+### Fixed
+
+- Fixed translation count mismatch where LLM would occasionally return fewer translations than expected. The prompt now explicitly instructs the model to return exactly the same number of translations as input strings.
+
 ## [0.3.9] - 2026-01-23
 
 ### Added
@@ -183,6 +193,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[0.3.10]: https://github.com/gettranslatebot/translatebot-django/compare/v0.3.9...v0.3.10
 [0.3.9]: https://github.com/gettranslatebot/translatebot-django/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/gettranslatebot/translatebot-django/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/gettranslatebot/translatebot-django/compare/v0.3.6...v0.3.7
