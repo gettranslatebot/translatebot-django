@@ -3,6 +3,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.core.management.base import CommandError
+from django.utils.translation import to_locale
 
 
 def get_model():
@@ -32,10 +33,18 @@ def get_all_po_paths(target_lang):
     """
     Find all .po files for the given target language across all Django
     locale paths.
+
+    The target_lang should be a language code (e.g., 'zh-hans', 'pt-br').
+    This function converts it to a locale name (e.g., 'zh_Hans', 'pt_BR')
+    for directory lookup, as Django uses locale names for directory structure.
     """
     import sys
 
     from django.apps import apps
+
+    # Convert language code to locale name for directory lookup
+    # e.g., 'zh-hans' -> 'zh_Hans', 'pt-br' -> 'pt_BR'
+    locale_name = to_locale(target_lang)
 
     po_paths = []
     checked_paths = []
@@ -50,7 +59,7 @@ def get_all_po_paths(target_lang):
     # Check LOCALE_PATHS from settings
     locale_paths = getattr(settings, "LOCALE_PATHS", [])
     for locale_path in locale_paths:
-        po_path = Path(locale_path) / target_lang / "LC_MESSAGES" / "django.po"
+        po_path = Path(locale_path) / locale_name / "LC_MESSAGES" / "django.po"
         checked_paths.append(str(po_path))
         if po_path.exists():
             po_paths.append(po_path)
@@ -68,7 +77,7 @@ def get_all_po_paths(target_lang):
         if not is_third_party:
             app_locale_dir = app_path / "locale"
             if app_locale_dir.exists():
-                po_path = app_locale_dir / target_lang / "LC_MESSAGES" / "django.po"
+                po_path = app_locale_dir / locale_name / "LC_MESSAGES" / "django.po"
                 checked_paths.append(str(po_path))
                 if po_path.exists():
                     po_paths.append(po_path)
@@ -77,7 +86,7 @@ def get_all_po_paths(target_lang):
     if not locale_paths:
         default_locale = Path("locale")
         if default_locale.exists():
-            po_path = default_locale / target_lang / "LC_MESSAGES" / "django.po"
+            po_path = default_locale / locale_name / "LC_MESSAGES" / "django.po"
             checked_paths.append(str(po_path))
             if po_path.exists():
                 po_paths.append(po_path)
@@ -87,7 +96,7 @@ def get_all_po_paths(target_lang):
         raise CommandError(
             f"No translation files found for language '{target_lang}'.\n"
             f"Checked locations:\n{locations}\n"
-            f"Run 'django-admin makemessages -l {target_lang}' to create "
+            f"Run 'django-admin makemessages -l {locale_name}' to create "
             "translation files."
         )
 
