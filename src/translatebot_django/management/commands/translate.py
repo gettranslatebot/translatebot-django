@@ -3,7 +3,7 @@ import json
 import polib
 import tiktoken
 from litellm import completion, get_max_tokens
-from litellm.exceptions import AuthenticationError
+from litellm.exceptions import AuthenticationError, BadRequestError
 
 from django.core.management.base import BaseCommand, CommandError
 
@@ -295,6 +295,15 @@ class Command(BaseCommand):
                     "Set TRANSLATEBOT_API_KEY in settings or "
                     "TRANSLATEBOT_API_KEY environment variable."
                 ) from e
+            except BadRequestError as e:
+                error_str = str(e).lower()
+                if "credit balance" in error_str or "billing" in error_str:
+                    raise CommandError(
+                        "Insufficient API credits. Your credit balance is too low "
+                        "to access the API.\n"
+                        "Please visit your API provider's billing page to add credits."
+                    ) from e
+                raise CommandError(f"API request failed: {str(e)}") from e
 
         # Now we have all the msgid -> translation mappings, we can proceed
         # with putting them into the .po files
@@ -474,6 +483,15 @@ class Command(BaseCommand):
                     "Set TRANSLATEBOT_API_KEY in settings or "
                     "TRANSLATEBOT_API_KEY environment variable."
                 ) from e
+            except BadRequestError as e:
+                error_str = str(e).lower()
+                if "credit balance" in error_str or "billing" in error_str:
+                    raise CommandError(
+                        "Insufficient API credits. Your credit balance is too low "
+                        "to access the API.\n"
+                        "Please visit your API provider's billing page to add credits."
+                    ) from e
+                raise CommandError(f"API request failed: {str(e)}") from e
 
         # Apply translations
         updated = backend.apply_translations(translation_items, dry_run=dry_run)

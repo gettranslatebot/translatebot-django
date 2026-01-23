@@ -680,6 +680,62 @@ def test_command_authentication_error(sample_po_file, mocker):
         call_command("translate", target_lang="nl")
 
 
+@pytest.mark.usefixtures("temp_locale_dir", "mock_model_config")
+def test_command_credit_balance_error(sample_po_file, mocker):
+    """Test that credit balance errors are properly caught and reported."""
+    from litellm.exceptions import BadRequestError
+
+    error_message = (
+        'AnthropicException - {"type":"error","error":{"type":"invalid_request_error",'
+        '"message":"Your credit balance is too low to access the Anthropic API. '
+        'Please go to Plans & Billing to upgrade or purchase credits."}}'
+    )
+
+    # Mock translate_text to raise BadRequestError
+    mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text",
+        side_effect=BadRequestError(
+            message=error_message,
+            llm_provider="anthropic",
+            model="claude-sonnet-4-20250514",
+        ),
+    )
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.get_api_key",
+        return_value="valid-key",
+    )
+
+    with pytest.raises(CommandError, match="Insufficient API credits"):
+        call_command("translate", target_lang="nl")
+
+
+@pytest.mark.usefixtures("temp_locale_dir", "mock_model_config")
+def test_command_bad_request_error_generic(sample_po_file, mocker):
+    """Test that generic bad request errors are properly caught and reported."""
+    from litellm.exceptions import BadRequestError
+
+    error_message = "Some other bad request error"
+
+    # Mock translate_text to raise BadRequestError
+    mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text",
+        side_effect=BadRequestError(
+            message=error_message,
+            llm_provider="anthropic",
+            model="claude-sonnet-4-20250514",
+        ),
+    )
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.get_api_key",
+        return_value="valid-key",
+    )
+
+    with pytest.raises(CommandError, match="API request failed"):
+        call_command("translate", target_lang="nl")
+
+
 def test_translate_text_api_returns_none_content(mocker):
     """Test error handling when API returns None content."""
     # Mock response with None content
