@@ -680,6 +680,177 @@ def test_command_authentication_error(sample_po_file, mocker):
         call_command("translate", target_lang="nl")
 
 
+@pytest.mark.usefixtures("temp_locale_dir", "mock_model_config")
+def test_command_credit_balance_error(sample_po_file, mocker):
+    """Test that credit balance errors are properly caught and reported."""
+    from litellm.exceptions import BadRequestError
+
+    error_message = (
+        'AnthropicException - {"type":"error","error":{"type":"invalid_request_error",'
+        '"message":"Your credit balance is too low to access the Anthropic API. '
+        'Please go to Plans & Billing to upgrade or purchase credits."}}'
+    )
+
+    # Mock translate_text to raise BadRequestError
+    mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text",
+        side_effect=BadRequestError(
+            message=error_message,
+            llm_provider="anthropic",
+            model="claude-sonnet-4-20250514",
+        ),
+    )
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.get_api_key",
+        return_value="valid-key",
+    )
+
+    with pytest.raises(CommandError, match="Insufficient API credits"):
+        call_command("translate", target_lang="nl")
+
+
+@pytest.mark.usefixtures("temp_locale_dir", "mock_model_config")
+def test_command_bad_request_error_generic(sample_po_file, mocker):
+    """Test that generic bad request errors are properly caught and reported."""
+    from litellm.exceptions import BadRequestError
+
+    error_message = "Some other bad request error"
+
+    # Mock translate_text to raise BadRequestError
+    mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text",
+        side_effect=BadRequestError(
+            message=error_message,
+            llm_provider="anthropic",
+            model="claude-sonnet-4-20250514",
+        ),
+    )
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.get_api_key",
+        return_value="valid-key",
+    )
+
+    with pytest.raises(CommandError, match="API request failed"):
+        call_command("translate", target_lang="nl")
+
+
+@pytest.mark.usefixtures("mock_model_config")
+def test_command_credit_balance_error_model_translation(mocker):
+    """Test that credit balance errors are caught in model translation path."""
+    from litellm.exceptions import BadRequestError
+
+    error_message = (
+        'AnthropicException - {"type":"error","error":{"type":"invalid_request_error",'
+        '"message":"Your credit balance is too low to access the Anthropic API. '
+        'Please go to Plans & Billing to upgrade or purchase credits."}}'
+    )
+
+    # Mock modeltranslation as available
+    mocker.patch(
+        "translatebot_django.management.commands.translate.is_modeltranslation_available",
+        return_value=True,
+    )
+
+    # Mock backend to return items to translate
+    mock_instance = mocker.MagicMock()
+    mock_model = mocker.MagicMock(__name__="TestModel")
+    mock_backend = mocker.MagicMock()
+    mock_backend.gather_translatable_content.return_value = [
+        {
+            "model": mock_model,
+            "source_text": "Hello",
+            "instance": mock_instance,
+            "target_field": "title_nl",
+            "field": "title",
+        }
+    ]
+    mocker.patch(
+        "translatebot_django.backends.modeltranslation.ModeltranslationBackend",
+        return_value=mock_backend,
+    )
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text",
+        side_effect=BadRequestError(
+            message=error_message,
+            llm_provider="anthropic",
+            model="claude-sonnet-4-20250514",
+        ),
+    )
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.get_api_key",
+        return_value="valid-key",
+    )
+
+    # Call handle() directly to bypass argparse (--models arg not registered
+    # when modeltranslation is not actually installed)
+    from translatebot_django.management.commands.translate import Command
+
+    cmd = Command()
+    cmd.stdout = StringIO()
+
+    with pytest.raises(CommandError, match="Insufficient API credits"):
+        cmd.handle(target_lang="nl", dry_run=False, overwrite=False, models=[])
+
+
+@pytest.mark.usefixtures("mock_model_config")
+def test_command_bad_request_error_generic_model_translation(mocker):
+    """Test that generic bad request errors are caught in model translation path."""
+    from litellm.exceptions import BadRequestError
+
+    error_message = "Some other bad request error"
+
+    # Mock modeltranslation as available
+    mocker.patch(
+        "translatebot_django.management.commands.translate.is_modeltranslation_available",
+        return_value=True,
+    )
+
+    # Mock backend to return items to translate
+    mock_instance = mocker.MagicMock()
+    mock_model = mocker.MagicMock(__name__="TestModel")
+    mock_backend = mocker.MagicMock()
+    mock_backend.gather_translatable_content.return_value = [
+        {
+            "model": mock_model,
+            "source_text": "Hello",
+            "instance": mock_instance,
+            "target_field": "title_nl",
+            "field": "title",
+        }
+    ]
+    mocker.patch(
+        "translatebot_django.backends.modeltranslation.ModeltranslationBackend",
+        return_value=mock_backend,
+    )
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text",
+        side_effect=BadRequestError(
+            message=error_message,
+            llm_provider="anthropic",
+            model="claude-sonnet-4-20250514",
+        ),
+    )
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.get_api_key",
+        return_value="valid-key",
+    )
+
+    # Call handle() directly to bypass argparse
+    from translatebot_django.management.commands.translate import Command
+
+    cmd = Command()
+    cmd.stdout = StringIO()
+
+    with pytest.raises(CommandError, match="API request failed"):
+        cmd.handle(target_lang="nl", dry_run=False, overwrite=False, models=[])
+
+
 def test_translate_text_api_returns_none_content(mocker):
     """Test error handling when API returns None content."""
     # Mock response with None content
