@@ -897,3 +897,95 @@ def test_translate_text_invalid_json_response(mocker):
 
     with pytest.raises(ValueError, match="Failed to parse JSON response"):
         translate_text(["Hello"], "nl", "gpt-4o-mini", "test-key")
+
+
+def test_translate_text_rate_limit_retry_success(mocker):
+    """Test that rate limit errors trigger retry and succeed on subsequent attempt."""
+    from litellm.exceptions import RateLimitError
+
+    mock_response = mocker.MagicMock()
+    mock_response.choices[0].message.content = '["Hallo"]'
+
+    mock_completion = mocker.patch(
+        "translatebot_django.management.commands.translate.completion"
+    )
+    # First call raises RateLimitError, second call succeeds
+    mock_completion.side_effect = [
+        RateLimitError(
+            message="Rate limit exceeded",
+            llm_provider="anthropic",
+            model="claude-3",
+        ),
+        mock_response,
+    ]
+
+    mock_sleep = mocker.patch(
+        "translatebot_django.management.commands.translate.time.sleep"
+    )
+
+    result = translate_text(["Hello"], "nl", "gpt-4o-mini", "test-api-key")
+
+    assert result == ["Hallo"]
+    assert mock_completion.call_count == 2
+    # Should have slept once with initial backoff (60 seconds)
+    mock_sleep.assert_called_once_with(60)
+
+
+def test_translate_text_rate_limit_retry_exponential_backoff(mocker):
+    """Test that retries use exponential backoff timing."""
+    from litellm.exceptions import RateLimitError
+
+    mock_response = mocker.MagicMock()
+    mock_response.choices[0].message.content = '["Hallo"]'
+
+    mock_completion = mocker.patch(
+        "translatebot_django.management.commands.translate.completion"
+    )
+    # First 3 calls raise RateLimitError, 4th call succeeds
+    mock_completion.side_effect = [
+        RateLimitError(message="Rate limit", llm_provider="anthropic", model="claude"),
+        RateLimitError(message="Rate limit", llm_provider="anthropic", model="claude"),
+        RateLimitError(message="Rate limit", llm_provider="anthropic", model="claude"),
+        mock_response,
+    ]
+
+    mock_sleep = mocker.patch(
+        "translatebot_django.management.commands.translate.time.sleep"
+    )
+
+    result = translate_text(["Hello"], "nl", "gpt-4o-mini", "test-api-key")
+
+    assert result == ["Hallo"]
+    assert mock_completion.call_count == 4
+    # Should have exponential backoff: 60, 120, 240 seconds
+    assert mock_sleep.call_count == 3
+    mock_sleep.assert_any_call(60)
+    mock_sleep.assert_any_call(120)
+    mock_sleep.assert_any_call(240)
+
+
+def test_translate_text_rate_limit_all_retries_exhausted(mocker):
+    """Test that error is raised after all retries are exhausted."""
+    from litellm.exceptions import RateLimitError
+
+    mock_completion = mocker.patch(
+        "translatebot_django.management.commands.translate.completion"
+    )
+    # All 5 calls raise RateLimitError
+    mock_completion.side_effect = RateLimitError(
+        message="Rate limit exceeded",
+        llm_provider="anthropic",
+        model="claude-3",
+    )
+
+    mock_sleep = mocker.patch(
+        "translatebot_django.management.commands.translate.time.sleep"
+    )
+
+    with pytest.raises(RateLimitError, match="Rate limit exceeded"):
+        translate_text(["Hello"], "nl", "gpt-4o-mini", "test-api-key")
+
+    # Should have tried 5 times (MAX_RETRIES)
+    assert mock_completion.call_count == 5
+    # Should have slept 4 times (before retries 2, 3, 4, 5)
+    assert mock_sleep.call_count == 4
