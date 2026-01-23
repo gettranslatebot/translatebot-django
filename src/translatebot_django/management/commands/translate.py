@@ -1,10 +1,12 @@
 import json
+import logging
+import time
 from contextlib import contextmanager
 
 import polib
 import tiktoken
 from litellm import completion, get_max_tokens
-from litellm.exceptions import AuthenticationError, BadRequestError
+from litellm.exceptions import AuthenticationError, BadRequestError, RateLimitError
 
 from django.core.management.base import BaseCommand, CommandError
 
@@ -14,6 +16,12 @@ from translatebot_django.utils import (
     get_model,
     is_modeltranslation_available,
 )
+
+logger = logging.getLogger(__name__)
+
+# Retry configuration for rate limit errors
+MAX_RETRIES = 5
+INITIAL_BACKOFF_SECONDS = 60  # Start with 60 seconds since rate limit is per minute
 
 
 @contextmanager
@@ -71,24 +79,43 @@ def create_preamble(target_lang, count):
 
 
 def translate_text(text, target_lang, model, api_key):
-    """Translate text by calling LiteLLM."""
-    # Preserve leading/trailing newlines for proper .po file formatting
+    """Translate text by calling LiteLLM with retry logic for rate limits."""
     preamble = create_preamble(target_lang, len(text))
-    response = completion(
-        model=model,
-        messages=[
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": preamble + json.dumps(text, ensure_ascii=False),
-            },
-        ],
-        temperature=0.2,  # Low randomness for consistency
-        api_key=api_key,
-    )
+
+    last_exception = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = completion(
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": SYSTEM_PROMPT,
+                    },
+                    {
+                        "role": "user",
+                        "content": preamble + json.dumps(text, ensure_ascii=False),
+                    },
+                ],
+                temperature=0.2,  # Low randomness for consistency
+                api_key=api_key,
+            )
+            break  # Success, exit retry loop
+        except RateLimitError as e:
+            last_exception = e
+            if attempt < MAX_RETRIES - 1:
+                # Exponential backoff: 60s, 120s, 240s, 480s
+                backoff = INITIAL_BACKOFF_SECONDS * (2**attempt)
+                logger.warning(
+                    "Rate limit hit, waiting %ds before retry (%d/%d)...",
+                    backoff,
+                    attempt + 1,
+                    MAX_RETRIES,
+                )
+                time.sleep(backoff)
+            else:
+                # All retries exhausted, re-raise the exception
+                raise last_exception from None
 
     content = response.choices[0].message.content
     if content is None:
