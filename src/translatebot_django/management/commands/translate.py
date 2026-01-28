@@ -14,6 +14,7 @@ from translatebot_django.utils import (
     get_all_po_paths,
     get_api_key,
     get_model,
+    get_translation_context,
     is_modeltranslation_available,
 )
 
@@ -54,7 +55,7 @@ def get_token_count(text):
     return len(tokens)
 
 
-SYSTEM_PROMPT = (
+BASE_SYSTEM_PROMPT = (
     "You are a professional software localization translator.\n"
     "Important rules:\n"
     "- The input is a JSON array of strings. The output MUST be a JSON array.\n"
@@ -68,7 +69,32 @@ SYSTEM_PROMPT = (
     "- Return ONLY the JSON array of translated strings, nothing else.\n"
     "- Do NOT wrap the JSON in markdown code blocks. Return raw JSON only."
 )
-SYSTEM_PROMPT_LENGTH = get_token_count(SYSTEM_PROMPT)
+
+# Alias for backward compatibility
+SYSTEM_PROMPT = BASE_SYSTEM_PROMPT
+SYSTEM_PROMPT_LENGTH = get_token_count(BASE_SYSTEM_PROMPT)
+
+
+def build_system_prompt(context=None):
+    """
+    Build the full system prompt, optionally including user-provided context.
+
+    Args:
+        context: Optional string containing translation context from TRANSLATING.md
+
+    Returns:
+        str: The complete system prompt
+    """
+    if not context:
+        return BASE_SYSTEM_PROMPT
+
+    return (
+        f"{BASE_SYSTEM_PROMPT}\n\n"
+        "## Project Context\n"
+        "The following context has been provided by the project maintainers "
+        "to help you produce accurate translations:\n\n"
+        f"{context}"
+    )
 
 
 def create_preamble(target_lang, count):
@@ -78,9 +104,18 @@ def create_preamble(target_lang, count):
     )
 
 
-def translate_text(text, target_lang, model, api_key):
-    """Translate text by calling LiteLLM with retry logic for rate limits."""
+def translate_text(text, target_lang, model, api_key, context=None):
+    """Translate text by calling LiteLLM with retry logic for rate limits.
+
+    Args:
+        text: List of strings to translate
+        target_lang: Target language code (e.g., 'nl', 'de')
+        model: LLM model to use
+        api_key: API key for the LLM provider
+        context: Optional translation context from TRANSLATING.md
+    """
     preamble = create_preamble(target_lang, len(text))
+    system_prompt = build_system_prompt(context)
 
     last_exception = None
     for attempt in range(MAX_RETRIES):
@@ -90,7 +125,7 @@ def translate_text(text, target_lang, model, api_key):
                 messages=[
                     {
                         "role": "system",
-                        "content": SYSTEM_PROMPT,
+                        "content": system_prompt,
                     },
                     {
                         "role": "user",
@@ -245,6 +280,13 @@ class Command(BaseCommand):
         model = get_model()
         api_key = get_api_key()
 
+        # Load translation context from TRANSLATING.md if available
+        context = get_translation_context()
+        if context:
+            self.stdout.write(
+                self.style.SUCCESS("📋 Found TRANSLATING.md - using project context")
+            )
+
         # Process each target language
         for lang in target_langs:
             if len(target_langs) > 1:
@@ -254,7 +296,9 @@ class Command(BaseCommand):
 
             # Handle .po file translation (existing logic)
             if translate_po:
-                self._translate_po_files(lang, dry_run, overwrite, model, api_key)
+                self._translate_po_files(
+                    lang, dry_run, overwrite, model, api_key, context
+                )
 
             # Handle model field translation (NEW)
             if translate_models:
@@ -265,6 +309,7 @@ class Command(BaseCommand):
                     model=model,
                     api_key=api_key,
                     model_names=models_arg,
+                    context=context,
                 )
 
         if len(target_langs) > 1:
@@ -277,7 +322,9 @@ class Command(BaseCommand):
             )
             self.stdout.write("=" * 60)
 
-    def _translate_po_files(self, target_lang, dry_run, overwrite, model, api_key):
+    def _translate_po_files(
+        self, target_lang, dry_run, overwrite, model, api_key, context=None
+    ):
         """Translate .po files (existing logic refactored into method)."""
         # Find all .po files for the target language
         po_paths = get_all_po_paths(target_lang)
@@ -340,6 +387,7 @@ class Command(BaseCommand):
                         target_lang=target_lang,
                         api_key=api_key,
                         model=model,
+                        context=context,
                     )
                     for msgid, translation in zip(group, translated, strict=True):
                         msgid_to_translation[msgid] = translation
@@ -403,6 +451,7 @@ class Command(BaseCommand):
         model,
         api_key,
         model_names=None,
+        context=None,
     ):
         """Translate django-modeltranslation model fields."""
         from translatebot_django.backends.modeltranslation import (
@@ -492,7 +541,7 @@ class Command(BaseCommand):
             with handle_api_errors():
                 for texts_group, items_group in groups:
                     translations = translate_text(
-                        texts_group, target_lang, model, api_key
+                        texts_group, target_lang, model, api_key, context=context
                     )
 
                     # Prepare translation items for this group

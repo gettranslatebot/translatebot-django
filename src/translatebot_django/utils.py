@@ -121,3 +121,38 @@ def get_modeltranslation_translator():
     from modeltranslation.translator import translator
 
     return translator
+
+
+def get_translation_context():
+    """
+    Find and read the TRANSLATING.md file from the project root.
+
+    This file allows users to provide context about their project
+    that will be included in the system prompt sent to the LLM,
+    helping to improve translation quality.
+
+    Returns:
+        str or None: The contents of TRANSLATING.md if found, None otherwise.
+    """
+    # Look for TRANSLATING.md in the project root (where manage.py typically is)
+    # Try settings.BASE_DIR first, then fall back to current directory
+    search_paths = []
+
+    # Try BASE_DIR from settings
+    base_dir = getattr(settings, "BASE_DIR", None)
+    if base_dir:
+        search_paths.append(Path(base_dir))
+
+    # Also try current working directory as fallback
+    search_paths.append(Path.cwd())
+
+    for base_path in search_paths:
+        context_file = base_path / "TRANSLATING.md"
+        if context_file.exists():
+            try:
+                return context_file.read_text(encoding="utf-8").strip()
+            except OSError:
+                # If we can't read the file for some reason, skip it
+                continue
+
+    return None
