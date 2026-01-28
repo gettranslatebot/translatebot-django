@@ -989,3 +989,269 @@ def test_translate_text_rate_limit_all_retries_exhausted(mocker):
     assert mock_completion.call_count == 5
     # Should have slept 4 times (before retries 2, 3, 4, 5)
     assert mock_sleep.call_count == 4
+
+
+# Tests for TRANSLATING.md context feature
+
+
+def test_get_translation_context_from_base_dir(tmp_path, settings):
+    """Test that get_translation_context finds TRANSLATING.md in BASE_DIR."""
+    from translatebot_django.utils import get_translation_context
+
+    settings.BASE_DIR = tmp_path
+    context_file = tmp_path / "TRANSLATING.md"
+    context_file.write_text("This is a medical translation project.")
+
+    context = get_translation_context()
+    assert context == "This is a medical translation project."
+
+
+def test_get_translation_context_from_cwd(tmp_path, settings, monkeypatch):
+    """Test that get_translation_context finds TRANSLATING.md in current directory."""
+    from translatebot_django.utils import get_translation_context
+
+    # Clear BASE_DIR so it falls back to cwd
+    settings.BASE_DIR = None
+    monkeypatch.chdir(tmp_path)
+
+    context_file = tmp_path / "TRANSLATING.md"
+    context_file.write_text("E-commerce terminology context.")
+
+    context = get_translation_context()
+    assert context == "E-commerce terminology context."
+
+
+def test_get_translation_context_not_found(tmp_path, settings, monkeypatch):
+    """Test that get_translation_context returns None when file doesn't exist."""
+    from translatebot_django.utils import get_translation_context
+
+    settings.BASE_DIR = tmp_path
+    monkeypatch.chdir(tmp_path)
+
+    context = get_translation_context()
+    assert context is None
+
+
+def test_get_translation_context_prefers_base_dir(tmp_path, settings, monkeypatch):
+    """Test that BASE_DIR takes precedence over cwd."""
+    from translatebot_django.utils import get_translation_context
+
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    monkeypatch.chdir(other_dir)
+
+    # Create context file in BASE_DIR
+    settings.BASE_DIR = tmp_path
+    base_dir_context = tmp_path / "TRANSLATING.md"
+    base_dir_context.write_text("Context from BASE_DIR")
+
+    # Create context file in cwd (should be ignored)
+    cwd_context = other_dir / "TRANSLATING.md"
+    cwd_context.write_text("Context from cwd")
+
+    context = get_translation_context()
+    assert context == "Context from BASE_DIR"
+
+
+def test_get_translation_context_strips_whitespace(tmp_path, settings):
+    """Test that get_translation_context strips leading/trailing whitespace."""
+    from translatebot_django.utils import get_translation_context
+
+    settings.BASE_DIR = tmp_path
+    context_file = tmp_path / "TRANSLATING.md"
+    context_file.write_text("\n\n  Some context with whitespace  \n\n")
+
+    context = get_translation_context()
+    assert context == "Some context with whitespace"
+
+
+def test_get_translation_context_handles_read_error(tmp_path, settings, mocker):
+    """Test that get_translation_context handles file read errors gracefully."""
+    from translatebot_django.utils import get_translation_context
+
+    settings.BASE_DIR = tmp_path
+    context_file = tmp_path / "TRANSLATING.md"
+    context_file.write_text("Some context")
+
+    # Mock the read_text method to raise an OSError
+    mocker.patch("pathlib.Path.read_text", side_effect=OSError("Permission denied"))
+
+    context = get_translation_context()
+    assert context is None
+
+
+def test_build_system_prompt_without_context():
+    """Test that build_system_prompt returns base prompt when no context provided."""
+    from translatebot_django.management.commands.translate import (
+        BASE_SYSTEM_PROMPT,
+        build_system_prompt,
+    )
+
+    result = build_system_prompt(None)
+    assert result == BASE_SYSTEM_PROMPT
+
+    result = build_system_prompt("")
+    assert result == BASE_SYSTEM_PROMPT
+
+
+def test_build_system_prompt_with_context():
+    """Test that build_system_prompt includes context in the prompt."""
+    from translatebot_django.management.commands.translate import (
+        BASE_SYSTEM_PROMPT,
+        build_system_prompt,
+    )
+
+    context = "This is a medical translation project."
+    result = build_system_prompt(context)
+
+    assert BASE_SYSTEM_PROMPT in result
+    assert "Project Context" in result
+    assert "This is a medical translation project." in result
+
+
+def test_translate_text_with_context(mocker):
+    """Test that translate_text passes context to the system prompt."""
+    mock_response = mocker.MagicMock()
+    mock_response.choices[0].message.content = '["Hallo"]'
+
+    mock_completion = mocker.patch(
+        "translatebot_django.management.commands.translate.completion"
+    )
+    mock_completion.return_value = mock_response
+
+    context = "Medical terminology project."
+    translate_text(["Hello"], "nl", "gpt-4o-mini", "test-api-key", context=context)
+
+    call_args = mock_completion.call_args
+    system_message = call_args[1]["messages"][0]["content"]
+    assert "Medical terminology project." in system_message
+    assert "Project Context" in system_message
+
+
+def test_translate_text_without_context_uses_base_prompt(mocker):
+    """Test that translate_text uses base prompt when no context provided."""
+    from translatebot_django.management.commands.translate import BASE_SYSTEM_PROMPT
+
+    mock_response = mocker.MagicMock()
+    mock_response.choices[0].message.content = '["Hallo"]'
+
+    mock_completion = mocker.patch(
+        "translatebot_django.management.commands.translate.completion"
+    )
+    mock_completion.return_value = mock_response
+
+    translate_text(["Hello"], "nl", "gpt-4o-mini", "test-api-key")
+
+    call_args = mock_completion.call_args
+    system_message = call_args[1]["messages"][0]["content"]
+    assert system_message == BASE_SYSTEM_PROMPT
+
+
+@pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
+def test_command_shows_message_when_translating_md_found(
+    sample_po_file, mock_completion, settings, tmp_path
+):
+    """Test that command shows message when TRANSLATING.md is found."""
+    mock_completion()
+
+    settings.BASE_DIR = tmp_path
+    context_file = tmp_path / "TRANSLATING.md"
+    context_file.write_text("Test context for translations.")
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    output = out.getvalue()
+    assert "Found TRANSLATING.md" in output
+
+
+@pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
+def test_command_no_message_when_translating_md_not_found(
+    sample_po_file, mock_completion, settings, tmp_path
+):
+    """Test that command doesn't show context message when TRANSLATING.md is missing."""
+    mock_completion()
+
+    settings.BASE_DIR = tmp_path
+    # Don't create TRANSLATING.md
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    output = out.getvalue()
+    assert "Found TRANSLATING.md" not in output
+
+
+@pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
+def test_command_passes_context_to_translation(
+    sample_po_file, settings, tmp_path, mocker
+):
+    """Test that the command passes context from TRANSLATING.md to translate_text."""
+    settings.BASE_DIR = tmp_path
+    context_file = tmp_path / "TRANSLATING.md"
+    context_file.write_text("Gaming industry terminology.")
+
+    def mock_translate_side_effect(text, *args, **kwargs):
+        # Return the same number of translations as input strings
+        return ["Vertaald"] * len(text)
+
+    mock_translate = mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text"
+    )
+    mock_translate.side_effect = mock_translate_side_effect
+
+    call_command("translate", target_lang="nl")
+
+    # Verify context was passed to translate_text
+    assert mock_translate.called
+    call_kwargs = mock_translate.call_args[1]
+    assert call_kwargs.get("context") == "Gaming industry terminology."
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_command_passes_context_to_model_translation(settings, tmp_path, mocker):
+    """Test that model translation also receives context from TRANSLATING.md."""
+    settings.BASE_DIR = tmp_path
+    context_file = tmp_path / "TRANSLATING.md"
+    context_file.write_text("Legal document translations.")
+
+    # Mock modeltranslation as available
+    mocker.patch(
+        "translatebot_django.management.commands.translate.is_modeltranslation_available",
+        return_value=True,
+    )
+
+    # Mock backend to return items to translate
+    mock_instance = mocker.MagicMock()
+    mock_model = mocker.MagicMock(__name__="TestModel")
+    mock_backend = mocker.MagicMock()
+    mock_backend.gather_translatable_content.return_value = [
+        {
+            "model": mock_model,
+            "source_text": "Hello",
+            "instance": mock_instance,
+            "target_field": "title_nl",
+            "field": "title",
+        }
+    ]
+    mocker.patch(
+        "translatebot_django.backends.modeltranslation.ModeltranslationBackend",
+        return_value=mock_backend,
+    )
+
+    mock_translate = mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text"
+    )
+    mock_translate.return_value = ["Vertaald"]
+
+    # Call handle() directly to bypass argparse
+    from translatebot_django.management.commands.translate import Command
+
+    cmd = Command()
+    cmd.stdout = StringIO()
+    cmd.handle(target_lang="nl", dry_run=False, overwrite=False, models=[])
+
+    # Verify context was passed to translate_text
+    assert mock_translate.called
+    call_kwargs = mock_translate.call_args[1]
+    assert call_kwargs.get("context") == "Legal document translations."
