@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-01-28
+
+### Added
+
+- Added support for `TRANSLATING.md` files to provide project-specific translation context. When present in your project root, the content is included in the LLM prompt to guide translations with terminology, tone, and style preferences.
+
+### Changed
+
+- Updated litellm from 1.81.1 to 1.81.4
+
 ## [0.3.10] - 2026-01-23
 
 ### Added
@@ -193,6 +203,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[0.4.0]: https://github.com/gettranslatebot/translatebot-django/compare/v0.3.10...v0.4.0
 [0.3.10]: https://github.com/gettranslatebot/translatebot-django/compare/v0.3.9...v0.3.10
 [0.3.9]: https://github.com/gettranslatebot/translatebot-django/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/gettranslatebot/translatebot-django/compare/v0.3.7...v0.3.8
