@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-02-09
+
+### Added
+
+- Added `--app` flag to filter translation by Django app
+
+### Changed
+
+- Updated litellm from 1.81.4 to 1.81.9
+- Updated Django from 5.2.10 to 5.2.11
+
 ## [0.4.0] - 2026-01-28
 
 ### Added
@@ -203,6 +214,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[0.5.0]: https://github.com/gettranslatebot/translatebot-django/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/gettranslatebot/translatebot-django/compare/v0.3.10...v0.4.0
 [0.3.10]: https://github.com/gettranslatebot/translatebot-django/compare/v0.3.9...v0.3.10
 [0.3.9]: https://github.com/gettranslatebot/translatebot-django/compare/v0.3.8...v0.3.9
