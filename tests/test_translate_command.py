@@ -1128,6 +1128,268 @@ def test_translate_text_with_context(mocker):
     assert "Project Context" in system_message
 
 
+def test_app_flag_filters_to_single_app(tmp_path, settings, mocker):
+    """Test --app filters to only the specified app's .po file."""
+    # Create two apps with locale dirs
+    app1_path = tmp_path / "app1"
+    app1_locale = app1_path / "locale" / "nl" / "LC_MESSAGES"
+    app1_locale.mkdir(parents=True)
+    app1_po = app1_locale / "django.po"
+    app1_po.write_text("")
+
+    app2_path = tmp_path / "app2"
+    app2_locale = app2_path / "locale" / "nl" / "LC_MESSAGES"
+    app2_locale.mkdir(parents=True)
+    app2_po = app2_locale / "django.po"
+    app2_po.write_text("")
+
+    settings.LOCALE_PATHS = []
+
+    mock_app1 = mocker.MagicMock()
+    mock_app1.path = str(app1_path)
+    mock_app1.label = "app1"
+
+    mock_app2 = mocker.MagicMock()
+    mock_app2.path = str(app2_path)
+    mock_app2.label = "app2"
+
+    mocker.patch(
+        "django.apps.apps.get_app_configs",
+        return_value=[mock_app1, mock_app2],
+    )
+
+    paths = get_all_po_paths("nl", app_labels=["app1"])
+    assert len(paths) == 1
+    assert paths[0] == app1_po
+
+
+def test_app_flag_filters_multiple_apps(tmp_path, settings, mocker):
+    """Test multiple --app flags include multiple apps."""
+    app1_path = tmp_path / "app1"
+    app1_locale = app1_path / "locale" / "nl" / "LC_MESSAGES"
+    app1_locale.mkdir(parents=True)
+    app1_po = app1_locale / "django.po"
+    app1_po.write_text("")
+
+    app2_path = tmp_path / "app2"
+    app2_locale = app2_path / "locale" / "nl" / "LC_MESSAGES"
+    app2_locale.mkdir(parents=True)
+    app2_po = app2_locale / "django.po"
+    app2_po.write_text("")
+
+    app3_path = tmp_path / "app3"
+    app3_locale = app3_path / "locale" / "nl" / "LC_MESSAGES"
+    app3_locale.mkdir(parents=True)
+    app3_po = app3_locale / "django.po"
+    app3_po.write_text("")
+
+    settings.LOCALE_PATHS = []
+
+    mock_apps = []
+    for name, path in [("app1", app1_path), ("app2", app2_path), ("app3", app3_path)]:
+        mock_app = mocker.MagicMock()
+        mock_app.path = str(path)
+        mock_app.label = name
+        mock_apps.append(mock_app)
+
+    mocker.patch("django.apps.apps.get_app_configs", return_value=mock_apps)
+
+    paths = get_all_po_paths("nl", app_labels=["app1", "app3"])
+    assert len(paths) == 2
+    assert app1_po in paths
+    assert app3_po in paths
+    assert app2_po not in paths
+
+
+def test_app_flag_unknown_app_raises_error(tmp_path, settings, mocker):
+    """Test --app with an unknown app label raises CommandError."""
+    settings.LOCALE_PATHS = []
+
+    mock_app = mocker.MagicMock()
+    mock_app.path = str(tmp_path / "myapp")
+    mock_app.label = "myapp"
+
+    mocker.patch("django.apps.apps.get_app_configs", return_value=[mock_app])
+
+    with pytest.raises(CommandError, match="Unknown app label"):
+        get_all_po_paths("nl", app_labels=["nonexistent"])
+
+
+def test_app_flag_app_without_locale_dir(tmp_path, settings, mocker):
+    """Test --app with an app that has no locale directory raises error."""
+    app_path = tmp_path / "nolocalapp"
+    app_path.mkdir()
+    # No locale directory created
+
+    settings.LOCALE_PATHS = []
+
+    mock_app = mocker.MagicMock()
+    mock_app.path = str(app_path)
+    mock_app.label = "nolocalapp"
+
+    mocker.patch("django.apps.apps.get_app_configs", return_value=[mock_app])
+
+    with pytest.raises(CommandError, match="No translation files found"):
+        get_all_po_paths("nl", app_labels=["nolocalapp"])
+
+
+def test_app_flag_skips_locale_paths(tmp_path, settings, mocker):
+    """Test that --app skips LOCALE_PATHS and default locale/ directory."""
+    # Set up LOCALE_PATHS with a .po file
+    locale_dir = tmp_path / "locale"
+    nl_dir = locale_dir / "nl" / "LC_MESSAGES"
+    nl_dir.mkdir(parents=True)
+    locale_po = nl_dir / "django.po"
+    locale_po.write_text("")
+
+    settings.LOCALE_PATHS = [str(locale_dir)]
+
+    # Set up an app with a .po file
+    app_path = tmp_path / "myapp"
+    app_locale = app_path / "locale" / "nl" / "LC_MESSAGES"
+    app_locale.mkdir(parents=True)
+    app_po = app_locale / "django.po"
+    app_po.write_text("")
+
+    mock_app = mocker.MagicMock()
+    mock_app.path = str(app_path)
+    mock_app.label = "myapp"
+
+    mocker.patch("django.apps.apps.get_app_configs", return_value=[mock_app])
+
+    paths = get_all_po_paths("nl", app_labels=["myapp"])
+    assert len(paths) == 1
+    assert app_po in paths
+    assert locale_po not in paths
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_app_flag_integration_via_call_command(
+    tmp_path, settings, mocker, mock_completion
+):
+    """Test --app works end-to-end through call_command."""
+    # Create two apps with locale dirs and .po files
+    app1_path = tmp_path / "app1"
+    app1_locale = app1_path / "locale" / "nl" / "LC_MESSAGES"
+    app1_locale.mkdir(parents=True)
+    app1_po = app1_locale / "django.po"
+    po1 = polib.POFile()
+    po1.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po1.append(polib.POEntry(msgid="App1 string", msgstr=""))
+    po1.save(str(app1_po))
+
+    app2_path = tmp_path / "app2"
+    app2_locale = app2_path / "locale" / "nl" / "LC_MESSAGES"
+    app2_locale.mkdir(parents=True)
+    app2_po = app2_locale / "django.po"
+    po2 = polib.POFile()
+    po2.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po2.append(polib.POEntry(msgid="App2 string", msgstr=""))
+    po2.save(str(app2_po))
+
+    settings.LOCALE_PATHS = []
+
+    mock_app1 = mocker.MagicMock()
+    mock_app1.path = str(app1_path)
+    mock_app1.label = "app1"
+    mock_app2 = mocker.MagicMock()
+    mock_app2.path = str(app2_path)
+    mock_app2.label = "app2"
+    mocker.patch(
+        "django.apps.apps.get_app_configs",
+        return_value=[mock_app1, mock_app2],
+    )
+
+    mock_completion("Vertaald")
+
+    out = StringIO()
+    call_command("translate", "--target-lang", "nl", "--app", "app1", stdout=out)
+
+    # app1's .po should be translated
+    po1_result = polib.pofile(str(app1_po))
+    assert po1_result[0].msgstr == "Vertaald"
+
+    # app2's .po should be untouched
+    po2_result = polib.pofile(str(app2_po))
+    assert po2_result[0].msgstr == ""
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_app_flag_multiple_integration_via_call_command(
+    tmp_path, settings, mocker, mock_completion
+):
+    """Test multiple --app flags work end-to-end through call_command."""
+    apps_data = {}
+    mock_apps = []
+    for name in ["app1", "app2", "app3"]:
+        app_path = tmp_path / name
+        app_locale = app_path / "locale" / "nl" / "LC_MESSAGES"
+        app_locale.mkdir(parents=True)
+        app_po = app_locale / "django.po"
+        po = polib.POFile()
+        po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+        po.append(polib.POEntry(msgid=f"{name} string", msgstr=""))
+        po.save(str(app_po))
+        apps_data[name] = app_po
+
+        mock_app = mocker.MagicMock()
+        mock_app.path = str(app_path)
+        mock_app.label = name
+        mock_apps.append(mock_app)
+
+    settings.LOCALE_PATHS = []
+    mocker.patch("django.apps.apps.get_app_configs", return_value=mock_apps)
+    mock_completion("Vertaald")
+
+    out = StringIO()
+    call_command(
+        "translate",
+        "--target-lang",
+        "nl",
+        "--app",
+        "app1",
+        "--app",
+        "app3",
+        stdout=out,
+    )
+
+    # app1 and app3 should be translated
+    assert polib.pofile(str(apps_data["app1"]))[0].msgstr == "Vertaald"
+    assert polib.pofile(str(apps_data["app3"]))[0].msgstr == "Vertaald"
+    # app2 should be untouched
+    assert polib.pofile(str(apps_data["app2"]))[0].msgstr == ""
+
+
+def test_app_flag_with_models_raises_error(settings, mocker):
+    """Test that --app together with --models raises CommandError."""
+    settings.TRANSLATEBOT_MODEL = "gpt-4o-mini"
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.is_modeltranslation_available",
+        return_value=True,
+    )
+    mocker.patch(
+        "translatebot_django.management.commands.translate.get_api_key",
+        return_value="test-key",
+    )
+
+    from translatebot_django.management.commands.translate import Command
+
+    cmd = Command()
+    cmd.stdout = StringIO()
+
+    with pytest.raises(
+        CommandError, match="--app cannot be used together with --models"
+    ):
+        cmd.handle(
+            target_lang="nl",
+            dry_run=False,
+            overwrite=False,
+            models=[],
+            apps=["myapp"],
+        )
+
+
 def test_translate_text_without_context_uses_base_prompt(mocker):
     """Test that translate_text uses base prompt when no context provided."""
     from translatebot_django.management.commands.translate import BASE_SYSTEM_PROMPT

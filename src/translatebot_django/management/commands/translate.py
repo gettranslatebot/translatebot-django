@@ -228,6 +228,15 @@ class Command(BaseCommand):
             help="Also re-translate entries that already have a msgstr.",
         )
 
+        parser.add_argument(
+            "--app",
+            action="append",
+            dest="apps",
+            metavar="APP_LABEL",
+            help="Only translate .po files for the specified Django app. "
+            "Can be used multiple times to include multiple apps.",
+        )
+
         # Only add modeltranslation-related arguments if it's available
         if is_modeltranslation_available():
             parser.add_argument(
@@ -246,6 +255,7 @@ class Command(BaseCommand):
         dry_run = options["dry_run"]
         overwrite = options["overwrite"]
         models_arg = options.get("models")
+        app_labels = options.get("apps")
 
         # Determine target languages
         target_langs = []
@@ -267,6 +277,13 @@ class Command(BaseCommand):
         # Determine what to translate
         translate_po = models_arg is None  # Default: translate .po files
         translate_models = models_arg is not None  # --models flag present
+
+        # --app only applies to .po file translation, not model translation
+        if app_labels and translate_models:
+            raise CommandError(
+                "--app cannot be used together with --models. "
+                "The --app flag only filters .po file translation."
+            )
 
         # If --models flag is used, check if modeltranslation is available
         if translate_models and not is_modeltranslation_available():
@@ -297,7 +314,13 @@ class Command(BaseCommand):
             # Handle .po file translation (existing logic)
             if translate_po:
                 self._translate_po_files(
-                    lang, dry_run, overwrite, model, api_key, context
+                    lang,
+                    dry_run,
+                    overwrite,
+                    model,
+                    api_key,
+                    context,
+                    app_labels=app_labels,
                 )
 
             # Handle model field translation (NEW)
@@ -323,11 +346,18 @@ class Command(BaseCommand):
             self.stdout.write("=" * 60)
 
     def _translate_po_files(
-        self, target_lang, dry_run, overwrite, model, api_key, context=None
+        self,
+        target_lang,
+        dry_run,
+        overwrite,
+        model,
+        api_key,
+        context=None,
+        app_labels=None,
     ):
         """Translate .po files (existing logic refactored into method)."""
         # Find all .po files for the target language
-        po_paths = get_all_po_paths(target_lang)
+        po_paths = get_all_po_paths(target_lang, app_labels=app_labels)
 
         all_msgids = []
         for po_path in po_paths:
