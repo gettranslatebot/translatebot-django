@@ -1,7 +1,9 @@
 import json
 import logging
 import time
+from collections import defaultdict
 from contextlib import contextmanager
+from pathlib import Path
 
 import polib
 import tiktoken
@@ -11,8 +13,10 @@ from litellm.exceptions import AuthenticationError, BadRequestError, RateLimitEr
 from django.core.management.base import BaseCommand, CommandError
 
 from translatebot_django.utils import (
+    combine_translation_contexts,
     get_all_po_paths,
     get_api_key,
+    get_app_translation_context,
     get_model,
     get_translation_context,
     is_modeltranslation_available,
@@ -359,12 +363,71 @@ class Command(BaseCommand):
         # Find all .po files for the target language
         po_paths = get_all_po_paths(target_lang, app_labels=app_labels)
 
-        all_msgids = []
+        # Group po_paths by effective translation context
+        context_groups = defaultdict(list)  # effective_context -> [po_paths]
         for po_path in po_paths:
-            all_msgids.extend(gather_strings(po_path, only_empty=overwrite))
+            app_ctx = get_app_translation_context(po_path)
+            if app_ctx:
+                app_dir = Path(po_path).resolve().parent.parent.parent.parent
+                self.stdout.write(
+                    self.style.SUCCESS(f"📋 Found TRANSLATING.md for {app_dir.name}")
+                )
+            effective = combine_translation_contexts(context, app_ctx)
+            context_groups[effective].append(po_path)
+
+        # Process each context group
+        msgid_to_translation = {}
+        total_msgids = 0
+
+        for effective_context, group_po_paths in context_groups.items():
+            all_msgids = []
+            for po_path in group_po_paths:
+                all_msgids.extend(gather_strings(po_path, only_empty=overwrite))
+
+            total_msgids += len(all_msgids)
+
+            if not all_msgids:
+                continue
+
+            # Split into token-sized groups
+            groups = []
+            group_candidate = []
+            for item in all_msgids:
+                group_candidate += [item]
+
+                total = get_token_count(json.dumps(group_candidate, ensure_ascii=False))
+                output_tokens_estimate = total * 1.3
+                preamble = create_preamble(target_lang, len(group_candidate))
+                preamble_length = get_token_count(preamble)
+
+                if total + preamble_length + output_tokens_estimate > get_max_tokens(
+                    model
+                ):
+                    groups.append(group_candidate)
+                    group_candidate = []
+
+            if group_candidate:
+                groups.append(group_candidate)
+
+            if dry_run:
+                for group in groups:
+                    for msgid in group:
+                        msgid_to_translation[msgid] = ""
+            else:
+                with handle_api_errors():
+                    for group in groups:
+                        translated = translate_text(
+                            text=group,
+                            target_lang=target_lang,
+                            api_key=api_key,
+                            model=model,
+                            context=effective_context,
+                        )
+                        for msgid, translation in zip(group, translated, strict=True):
+                            msgid_to_translation[msgid] = translation
 
         # Early return with minimal output if nothing to translate
-        if len(all_msgids) == 0:
+        if total_msgids == 0:
             if dry_run:
                 self.stdout.write(
                     self.style.SUCCESS(
@@ -379,48 +442,12 @@ class Command(BaseCommand):
                 )
             return
 
-        groups = []
-        group_candidate = []
-        for item in all_msgids:
-            group_candidate += [item]
-
-            total = get_token_count(json.dumps(group_candidate, ensure_ascii=False))
-            output_tokens_estimate = total * 1.3
-            preamble = create_preamble(target_lang, len(group_candidate))
-            preamble_length = get_token_count(preamble)
-
-            if total + preamble_length + output_tokens_estimate > get_max_tokens(model):
-                groups.append(group_candidate)
-                group_candidate = []
-
-        if group_candidate:
-            groups.append(group_candidate)
-
-        self.stdout.write(f"ℹ️  Found {len(all_msgids)} untranslated entries")
+        self.stdout.write(f"ℹ️  Found {total_msgids} untranslated entries")
 
         if dry_run:
             self.stdout.write("🔍 Dry run mode: skipping LLM translation")
         else:
             self.stdout.write(f"🔄 Translating with {model}...")
-
-        msgid_to_translation = {}
-        if dry_run:
-            # In dry run, just map all msgids to empty strings for counting
-            for group in groups:
-                for msgid in group:
-                    msgid_to_translation[msgid] = ""
-        else:
-            with handle_api_errors():
-                for group in groups:
-                    translated = translate_text(
-                        text=group,
-                        target_lang=target_lang,
-                        api_key=api_key,
-                        model=model,
-                        context=context,
-                    )
-                    for msgid, translation in zip(group, translated, strict=True):
-                        msgid_to_translation[msgid] = translation
 
         # Now we have all the msgid -> translation mappings, we can proceed
         # with putting them into the .po files

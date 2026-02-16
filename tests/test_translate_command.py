@@ -12,8 +12,10 @@ from django.core.management.base import CommandError
 
 from translatebot_django.management.commands.translate import translate_text
 from translatebot_django.utils import (
+    combine_translation_contexts,
     get_all_po_paths,
     get_api_key,
+    get_app_translation_context,
     get_model,
     get_modeltranslation_translator,
 )
@@ -1517,3 +1519,395 @@ def test_command_passes_context_to_model_translation(settings, tmp_path, mocker)
     assert mock_translate.called
     call_kwargs = mock_translate.call_args[1]
     assert call_kwargs.get("context") == "Legal document translations."
+
+
+# Tests for get_app_translation_context()
+
+
+def test_get_app_translation_context_found(tmp_path):
+    """Test get_app_translation_context returns content when found."""
+    app_dir = tmp_path / "myapp"
+    locale_dir = app_dir / "locale" / "nl" / "LC_MESSAGES"
+    locale_dir.mkdir(parents=True)
+    po_path = locale_dir / "django.po"
+
+    translating_md = app_dir / "TRANSLATING.md"
+    translating_md.write_text("Medical terminology context.")
+
+    result = get_app_translation_context(po_path)
+    assert result == "Medical terminology context."
+
+
+def test_get_app_translation_context_not_found(tmp_path):
+    """Test that get_app_translation_context returns None when no TRANSLATING.md."""
+    app_dir = tmp_path / "myapp"
+    locale_dir = app_dir / "locale" / "nl" / "LC_MESSAGES"
+    locale_dir.mkdir(parents=True)
+    po_path = locale_dir / "django.po"
+
+    result = get_app_translation_context(po_path)
+    assert result is None
+
+
+def test_get_app_translation_context_strips_whitespace(tmp_path):
+    """Test that get_app_translation_context strips whitespace from content."""
+    app_dir = tmp_path / "myapp"
+    locale_dir = app_dir / "locale" / "nl" / "LC_MESSAGES"
+    locale_dir.mkdir(parents=True)
+    po_path = locale_dir / "django.po"
+
+    translating_md = app_dir / "TRANSLATING.md"
+    translating_md.write_text("\n\n  Some context  \n\n")
+
+    result = get_app_translation_context(po_path)
+    assert result == "Some context"
+
+
+def test_get_app_translation_context_empty_file_returns_none(tmp_path):
+    """Test that get_app_translation_context returns None for empty/whitespace file."""
+    app_dir = tmp_path / "myapp"
+    locale_dir = app_dir / "locale" / "nl" / "LC_MESSAGES"
+    locale_dir.mkdir(parents=True)
+    po_path = locale_dir / "django.po"
+
+    translating_md = app_dir / "TRANSLATING.md"
+    translating_md.write_text("   \n\n   ")
+
+    result = get_app_translation_context(po_path)
+    assert result is None
+
+
+def test_get_app_translation_context_handles_oserror(tmp_path, mocker):
+    """Test that get_app_translation_context handles OSError gracefully."""
+    app_dir = tmp_path / "myapp"
+    locale_dir = app_dir / "locale" / "nl" / "LC_MESSAGES"
+    locale_dir.mkdir(parents=True)
+    po_path = locale_dir / "django.po"
+
+    translating_md = app_dir / "TRANSLATING.md"
+    translating_md.write_text("Some context")
+
+    mocker.patch("pathlib.Path.read_text", side_effect=OSError("Permission denied"))
+
+    result = get_app_translation_context(po_path)
+    assert result is None
+
+
+def test_get_app_translation_context_skips_base_dir(tmp_path, settings):
+    """Test that get_app_translation_context skips when app_dir is BASE_DIR."""
+    settings.BASE_DIR = tmp_path
+
+    # po_path is at tmp_path/locale/nl/LC_MESSAGES/django.po
+    # so app_dir = tmp_path (which matches BASE_DIR)
+    locale_dir = tmp_path / "locale" / "nl" / "LC_MESSAGES"
+    locale_dir.mkdir(parents=True)
+    po_path = locale_dir / "django.po"
+
+    translating_md = tmp_path / "TRANSLATING.md"
+    translating_md.write_text("Project-level context")
+
+    result = get_app_translation_context(po_path)
+    assert result is None
+
+
+def test_get_app_translation_context_skips_cwd(tmp_path, settings, monkeypatch):
+    """Test that get_app_translation_context skips when app_dir is cwd."""
+    settings.BASE_DIR = None
+    monkeypatch.chdir(tmp_path)
+
+    locale_dir = tmp_path / "locale" / "nl" / "LC_MESSAGES"
+    locale_dir.mkdir(parents=True)
+    po_path = locale_dir / "django.po"
+
+    translating_md = tmp_path / "TRANSLATING.md"
+    translating_md.write_text("Project-level context")
+
+    result = get_app_translation_context(po_path)
+    assert result is None
+
+
+def test_get_app_translation_context_skips_locale_paths_structure(tmp_path):
+    """Test that get_app_translation_context skips non-app locale structures."""
+    # LOCALE_PATHS entries are {locale_path}/{lang}/LC_MESSAGES/django.po
+    # with no "locale" directory in the path — should return None
+    locale_path = tmp_path / "project_locale"
+    lc_dir = locale_path / "nl" / "LC_MESSAGES"
+    lc_dir.mkdir(parents=True)
+    po_path = lc_dir / "django.po"
+
+    # Even if there's a TRANSLATING.md above, it shouldn't be found
+    (tmp_path / "TRANSLATING.md").write_text("Should not be found")
+
+    result = get_app_translation_context(po_path)
+    assert result is None
+
+
+# Tests for combine_translation_contexts()
+
+
+def test_combine_both_present():
+    """Test combining both project and app contexts."""
+    result = combine_translation_contexts("Project context", "App context")
+    assert result == "Project context\n\n## App-Specific Context\nApp context"
+
+
+def test_combine_only_project():
+    """Test with only project context."""
+    result = combine_translation_contexts("Project context", None)
+    assert result == "Project context"
+
+
+def test_combine_only_app():
+    """Test with only app context."""
+    result = combine_translation_contexts(None, "App context")
+    assert result == "App context"
+
+
+def test_combine_neither():
+    """Test with neither context."""
+    result = combine_translation_contexts(None, None)
+    assert result is None
+
+
+def test_combine_empty_strings_treated_as_falsy():
+    """Test that empty strings are treated as falsy."""
+    assert combine_translation_contexts("", "") is None
+    assert combine_translation_contexts("Project", "") == "Project"
+    assert combine_translation_contexts("", "App") == "App"
+
+
+# Integration tests for per-app context
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_per_app_context_passed_to_translate_text(tmp_path, settings, mocker):
+    """Test per-app context is passed to translate_text."""
+    # Create an app with locale dir and TRANSLATING.md
+    app_path = tmp_path / "medical_app"
+    app_locale = app_path / "locale" / "nl" / "LC_MESSAGES"
+    app_locale.mkdir(parents=True)
+    app_po = app_locale / "django.po"
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po.append(polib.POEntry(msgid="Diagnosis", msgstr=""))
+    po.save(str(app_po))
+
+    # Create app-level TRANSLATING.md
+    (app_path / "TRANSLATING.md").write_text("Use medical terminology.")
+
+    settings.LOCALE_PATHS = []
+    settings.BASE_DIR = tmp_path
+
+    mock_app = mocker.MagicMock()
+    mock_app.path = str(app_path)
+    mock_app.label = "medical_app"
+    mocker.patch("django.apps.apps.get_app_configs", return_value=[mock_app])
+
+    mock_translate = mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text"
+    )
+    mock_translate.return_value = ["Diagnose"]
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    assert mock_translate.called
+    call_kwargs = mock_translate.call_args[1]
+    assert "Use medical terminology." in call_kwargs["context"]
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_per_app_context_combined_with_project_context(tmp_path, settings, mocker):
+    """Test that per-app context is combined with project-level context."""
+    # Create project-level TRANSLATING.md
+    settings.BASE_DIR = tmp_path
+    (tmp_path / "TRANSLATING.md").write_text("General project context.")
+
+    # Create an app with its own TRANSLATING.md
+    app_path = tmp_path / "legal_app"
+    app_locale = app_path / "locale" / "nl" / "LC_MESSAGES"
+    app_locale.mkdir(parents=True)
+    app_po = app_locale / "django.po"
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po.append(polib.POEntry(msgid="Contract", msgstr=""))
+    po.save(str(app_po))
+
+    (app_path / "TRANSLATING.md").write_text("Legal terminology.")
+
+    settings.LOCALE_PATHS = []
+
+    mock_app = mocker.MagicMock()
+    mock_app.path = str(app_path)
+    mock_app.label = "legal_app"
+    mocker.patch("django.apps.apps.get_app_configs", return_value=[mock_app])
+
+    mock_translate = mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text"
+    )
+    mock_translate.return_value = ["Contract"]
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    call_kwargs = mock_translate.call_args[1]
+    assert "General project context." in call_kwargs["context"]
+    assert "App-Specific Context" in call_kwargs["context"]
+    assert "Legal terminology." in call_kwargs["context"]
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_multiple_apps_different_contexts_separate_batches(tmp_path, settings, mocker):
+    """Test that apps with different contexts get separate batches."""
+    settings.BASE_DIR = tmp_path
+    settings.LOCALE_PATHS = []
+
+    # App1 with TRANSLATING.md
+    app1_path = tmp_path / "app1"
+    app1_locale = app1_path / "locale" / "nl" / "LC_MESSAGES"
+    app1_locale.mkdir(parents=True)
+    po1 = polib.POFile()
+    po1.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po1.append(polib.POEntry(msgid="App1 string", msgstr=""))
+    po1.save(str(app1_locale / "django.po"))
+    (app1_path / "TRANSLATING.md").write_text("App1 context.")
+
+    # App2 with different TRANSLATING.md
+    app2_path = tmp_path / "app2"
+    app2_locale = app2_path / "locale" / "nl" / "LC_MESSAGES"
+    app2_locale.mkdir(parents=True)
+    po2 = polib.POFile()
+    po2.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po2.append(polib.POEntry(msgid="App2 string", msgstr=""))
+    po2.save(str(app2_locale / "django.po"))
+    (app2_path / "TRANSLATING.md").write_text("App2 context.")
+
+    mock_apps = []
+    for name, path in [("app1", app1_path), ("app2", app2_path)]:
+        mock_app = mocker.MagicMock()
+        mock_app.path = str(path)
+        mock_app.label = name
+        mock_apps.append(mock_app)
+    mocker.patch("django.apps.apps.get_app_configs", return_value=mock_apps)
+
+    contexts_used = []
+
+    def mock_translate_side_effect(text, *args, **kwargs):
+        contexts_used.append(kwargs.get("context"))
+        return [f"Translated: {s}" for s in text]
+
+    mock_translate = mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text"
+    )
+    mock_translate.side_effect = mock_translate_side_effect
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    # Should have been called twice (once per context group)
+    assert mock_translate.call_count == 2
+    # Each call should have a different context
+    assert len({str(c) for c in contexts_used}) == 2
+    assert any("App1 context." in str(c) for c in contexts_used)
+    assert any("App2 context." in str(c) for c in contexts_used)
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_apps_without_per_app_context_share_batch(tmp_path, settings, mocker):
+    """Test that apps without per-app TRANSLATING.md share a batch."""
+    settings.BASE_DIR = tmp_path
+    settings.LOCALE_PATHS = []
+
+    # Two apps without TRANSLATING.md
+    mock_apps = []
+    for name in ["app1", "app2"]:
+        app_path = tmp_path / name
+        app_locale = app_path / "locale" / "nl" / "LC_MESSAGES"
+        app_locale.mkdir(parents=True)
+        po = polib.POFile()
+        po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+        po.append(polib.POEntry(msgid=f"{name} string", msgstr=""))
+        po.save(str(app_locale / "django.po"))
+
+        mock_app = mocker.MagicMock()
+        mock_app.path = str(app_path)
+        mock_app.label = name
+        mock_apps.append(mock_app)
+
+    mocker.patch("django.apps.apps.get_app_configs", return_value=mock_apps)
+
+    mock_translate = mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text"
+    )
+    mock_translate.return_value = ["Vertaald1", "Vertaald2"]
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    # Should be called once since both apps share the same context (None)
+    assert mock_translate.call_count == 1
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_backward_compatibility_no_per_app_files(tmp_path, settings, mocker):
+    """Test backward compatibility: no per-app files behaves identically."""
+    settings.BASE_DIR = tmp_path
+    settings.LOCALE_PATHS = []
+
+    app_path = tmp_path / "myapp"
+    app_locale = app_path / "locale" / "nl" / "LC_MESSAGES"
+    app_locale.mkdir(parents=True)
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po.append(polib.POEntry(msgid="Hello", msgstr=""))
+    po.save(str(app_locale / "django.po"))
+
+    mock_app = mocker.MagicMock()
+    mock_app.path = str(app_path)
+    mock_app.label = "myapp"
+    mocker.patch("django.apps.apps.get_app_configs", return_value=[mock_app])
+
+    mock_translate = mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text"
+    )
+    mock_translate.return_value = ["Hallo"]
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    # Context should be None (no project or app TRANSLATING.md)
+    call_kwargs = mock_translate.call_args[1]
+    assert call_kwargs.get("context") is None
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_command_output_shows_per_app_context_message(tmp_path, settings, mocker):
+    """Test that command output shows per-app context detection message."""
+    settings.BASE_DIR = tmp_path
+    settings.LOCALE_PATHS = []
+
+    app_path = tmp_path / "medical_app"
+    app_locale = app_path / "locale" / "nl" / "LC_MESSAGES"
+    app_locale.mkdir(parents=True)
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po.append(polib.POEntry(msgid="Diagnosis", msgstr=""))
+    po.save(str(app_locale / "django.po"))
+
+    (app_path / "TRANSLATING.md").write_text("Medical context.")
+
+    mock_app = mocker.MagicMock()
+    mock_app.path = str(app_path)
+    mock_app.label = "medical_app"
+    mocker.patch("django.apps.apps.get_app_configs", return_value=[mock_app])
+
+    mock_translate = mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text"
+    )
+    mock_translate.return_value = ["Diagnose"]
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    output = out.getvalue()
+    assert "Found TRANSLATING.md for medical_app" in output
