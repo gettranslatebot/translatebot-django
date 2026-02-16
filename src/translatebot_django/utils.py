@@ -175,3 +175,70 @@ def get_translation_context():
                 continue
 
     return None
+
+
+def get_app_translation_context(po_path):
+    """
+    Find and read a TRANSLATING.md file from the app directory containing the .po file.
+
+    Expects the standard Django app locale structure:
+    {app_dir}/locale/{lang}/LC_MESSAGES/django.po
+
+    Skips if the path doesn't match this structure (e.g. LOCALE_PATHS entries),
+    or if app_dir matches settings.BASE_DIR or Path.cwd() to avoid
+    duplicating the project-level context.
+
+    Args:
+        po_path: Path to a django.po file
+
+    Returns:
+        str or None: The contents of the app's TRANSLATING.md if found, None otherwise.
+    """
+    po_path = Path(po_path).resolve()
+
+    # Validate expected Django app locale structure:
+    # {app}/locale/{lang}/LC_MESSAGES/django.po
+    if (
+        po_path.parent.name != "LC_MESSAGES"
+        or po_path.parent.parent.parent.name != "locale"
+    ):
+        return None
+
+    app_dir = po_path.parent.parent.parent.parent
+
+    # Skip project root directories to avoid duplicating project-level context
+    base_dir = getattr(settings, "BASE_DIR", None)
+    if base_dir and app_dir == Path(base_dir).resolve():
+        return None
+    if app_dir == Path.cwd().resolve():
+        return None
+
+    context_file = app_dir / "TRANSLATING.md"
+    if context_file.exists():
+        try:
+            content = context_file.read_text(encoding="utf-8").strip()
+            return content or None
+        except OSError:
+            return None
+
+    return None
+
+
+def combine_translation_contexts(project_context, app_context):
+    """
+    Combine project-level and app-level translation contexts.
+
+    Args:
+        project_context: Optional string from project-level TRANSLATING.md
+        app_context: Optional string from app-level TRANSLATING.md
+
+    Returns:
+        str or None: Combined context, or whichever is available, or None.
+    """
+    if project_context and app_context:
+        return f"{project_context}\n\n## App-Specific Context\n{app_context}"
+    if project_context:
+        return project_context
+    if app_context:
+        return app_context
+    return None
