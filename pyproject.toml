@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "translatebot-django"
 version = "0.6.0"
-description = "Stop copy-pasting to and from Google Translate. Translate your Django .po files automatically with AI."
+description = "Automate Django .po file translation with AI. Repeatable, consistent, and pennies per language."
 authors = [
   { name = "Bjorn the Builder" },
   { email = "bjornthebuilder@proton.me" }
