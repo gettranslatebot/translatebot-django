@@ -4,34 +4,28 @@
 
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](https://www.python.org/) [![Django](https://img.shields.io/badge/django-4.2%20%7C%205.x%20%7C%206.0-green)](https://www.djangoproject.com/)
 
-**Stop copy-pasting to and from Google Translate.** Translate your Django `.po` files automatically with AI.
+**Automate Django translations with AI.** Repeatable, consistent, and pennies per language.
 
 Documentation: **[https://translatebot.dev/docs/](https://translatebot.dev/docs/)**
 
 ## The Problem
 
-Maintaining translations in Django is painful:
+Translating a Django app sounds simple until it isn't:
 
-- Opening `.po` files, copying to Google Translate, pasting back - repeat 200 times
-- Placeholders like `%(username)s` get mangled and crash your app
-- Source strings change, and now you need to update .po files for all 10 languages
-- Hours spent on translations instead of building features
+- **Manual workflow doesn't scale.** Copy strings to Google Translate, paste back, fix placeholders, repeat for every language. It works for 20 strings. It falls apart at 200.
+- **AI assistants work once, but not repeatedly.** You can ask ChatGPT or Claude Code to translate a `.po` file, and it'll do a decent job. Once. Next sprint, when 15 new strings appear, you're prompting from scratch, re-translating the whole file, and hoping it stays consistent.
+- **SaaS translation platforms are expensive overkill.** Paid localization services charge per-word subscriptions and come with portals, review workflows, and team features you don't need for a solo project or small team.
 
-## The Solution
+## Why TranslateBot
 
-One command translates everything while preserving your Django placeholders:
+TranslateBot is a dedicated tool that sits between "do it by hand" and "pay for a platform":
 
-```bash
-python manage.py translate --target-lang fr
-```
-
-## Features
-
-- **Multiple AI Providers**: OpenAI, Anthropic, Google Gemini, Azure, and [many more](https://docs.litellm.ai/docs/providers)
-- **Smart Translation**: Preserves placeholders (`%(name)s`, `{0}`, `%s`) and HTML tags
-- **Model Field Translation**: Supports [django-modeltranslation](https://github.com/deschler/django-modeltranslation)
-- **Flexible Configuration**: Django settings, environment variables, or CLI arguments
-- **Well Tested**: 100% code coverage
+- **Incremental.** Only translates new and changed strings. Add 10 strings in a sprint, pay for 10 strings, not the whole file.
+- **Consistent.** A `TRANSLATING.md` file in your repo acts as a version-controlled glossary: terminology, tone, brand rules. Every translation run uses it.
+- **Cost-efficient.** Batches strings into optimized API requests. A typical app costs under $0.01 per language with GPT-4o-mini.
+- **Scales to many languages.** One command translates all your configured languages. Adding a new locale is a one-liner.
+- **Automatable.** A CLI command you can script or hook into your workflow. No browser, no portal.
+- **Placeholder-safe.** Preserves `%(name)s`, `{0}`, `%s`, and HTML tags with 100% test coverage on format string handling.
 
 ## Installation
 
@@ -60,6 +54,25 @@ python manage.py translate --target-lang nl
 # Preview without saving
 python manage.py translate --target-lang nl --dry-run
 ```
+
+## Features
+
+- **Multiple AI Providers**: OpenAI, Anthropic, Google Gemini, Azure, and [many more](https://docs.litellm.ai/docs/providers)
+- **Smart Translation**: Preserves placeholders (`%(name)s`, `{0}`, `%s`) and HTML tags
+- **Model Field Translation**: Supports [django-modeltranslation](https://github.com/deschler/django-modeltranslation)
+- **Flexible Configuration**: Django settings, environment variables, or CLI arguments
+- **Well Tested**: 100% code coverage
+
+## When to Use TranslateBot
+
+For a one-off translation of 20 strings, ChatGPT works fine. TranslateBot is for **ongoing projects** with multiple languages where translations need to stay in sync as your code changes.
+
+Use TranslateBot when:
+
+- You're actively developing and strings change every sprint
+- You support 3+ languages and want them all updated at once
+- You want consistent terminology across translation runs
+- You want translations done in seconds, not hours of manual work
 
 ## Documentation
 
