@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](https://www.python.org/) [![Django](https://img.shields.io/badge/django-4.2%20%7C%205.x%20%7C%206.0-green)](https://www.djangoproject.com/)
 
-**Automate Django translations with AI.** Repeatable, consistent, and pennies per language.
+⚡ **Automate Django translations with AI.** Repeatable, consistent, and pennies per language.
 
 Documentation: **[https://translatebot.dev/docs/](https://translatebot.dev/docs/)**
 
