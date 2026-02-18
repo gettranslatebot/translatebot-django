@@ -35,8 +35,10 @@ python manage.py translate --target-lang fr
 
 ## Installation
 
+TranslateBot is a development tool, so we recommend installing it as a dev dependency:
+
 ```bash
-pip install translatebot-django
+uv add --dev translatebot-django
 ```
 
 ## Quick Start
