@@ -72,7 +72,7 @@ Use TranslateBot when:
 - You're actively developing and strings change every sprint
 - You support 3+ languages and want them all updated at once
 - You want consistent terminology across translation runs
-- You want to automate translations in CI or a deploy script
+- You want translations done in seconds, not hours of manual work
 
 ## Documentation
 
