@@ -24,7 +24,7 @@ TranslateBot is a dedicated tool that sits between "do it by hand" and "pay for 
 - **Consistent.** A `TRANSLATING.md` file in your repo acts as a version-controlled glossary: terminology, tone, brand rules. Every translation run uses it.
 - **Cost-efficient.** Batches strings into optimized API requests. A typical app costs under $0.01 per language with GPT-4o-mini.
 - **Scales to many languages.** One command translates all your configured languages. Adding a new locale is a one-liner.
-- **Automatable.** A CLI command that can run in CI/CD, pre-commit hooks, or shell scripts. No browser, no portal.
+- **Automatable.** A CLI command you can script or hook into your workflow. No browser, no portal.
 - **Placeholder-safe.** Preserves `%(name)s`, `{0}`, `%s`, and HTML tags with 100% test coverage on format string handling.
 
 ## Installation
