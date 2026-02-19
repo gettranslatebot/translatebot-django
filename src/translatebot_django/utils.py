@@ -29,6 +29,69 @@ def get_api_key():
     return api_key
 
 
+def _iter_locale_dirs(app_labels=None):
+    """
+    Yield locale directories from LOCALE_PATHS, app locale dirs, and default locale/.
+
+    Excludes third-party packages in site-packages/dist-packages. When app_labels
+    is provided, only yields app locale dirs for matching apps (skips LOCALE_PATHS
+    and the default locale/ directory).
+    """
+    import sys
+
+    from django.apps import apps
+
+    # Identify site-packages directories to exclude third-party apps
+    site_packages_dirs = {
+        Path(p).resolve()
+        for p in sys.path
+        if "site-packages" in p or "dist-packages" in p
+    }
+
+    # Check LOCALE_PATHS from settings (skip when filtering by app)
+    locale_paths = getattr(settings, "LOCALE_PATHS", [])
+    if not app_labels:
+        for locale_path in locale_paths:
+            yield Path(locale_path)
+
+    # Check each installed app for locale directories (only project apps)
+    for app_config in apps.get_app_configs():
+        if app_labels and app_config.label not in app_labels:
+            continue
+
+        app_path = Path(app_config.path).resolve()
+
+        is_third_party = any(
+            str(app_path).startswith(str(site_pkg)) for site_pkg in site_packages_dirs
+        )
+
+        if not is_third_party:
+            app_locale_dir = app_path / "locale"
+            if app_locale_dir.exists():
+                yield app_locale_dir
+
+    # Check default locale directory in project root (skip when filtering by app)
+    if not app_labels and not locale_paths:
+        base_dir = getattr(settings, "BASE_DIR", None)
+        default_locale = Path(base_dir) / "locale" if base_dir else Path("locale")
+        if default_locale.exists():
+            yield default_locale
+
+
+def get_all_po_files():
+    """
+    Find all .po files across all configured locale paths.
+
+    Searches LOCALE_PATHS, app locale directories (excluding third-party packages),
+    and the default locale/ directory. Returns deduplicated, resolved paths.
+    """
+    po_files = set()
+    for locale_dir in _iter_locale_dirs():
+        for po_path in locale_dir.glob("*/LC_MESSAGES/django.po"):
+            po_files.add(po_path.resolve())
+    return sorted(po_files)
+
+
 def get_all_po_paths(target_lang, app_labels=None):
     """
     Find all .po files for the given target language across all Django
@@ -42,8 +105,6 @@ def get_all_po_paths(target_lang, app_labels=None):
     app_config.label matches one of the given labels. LOCALE_PATHS and the
     default locale/ directory are skipped when filtering by app.
     """
-    import sys
-
     from django.apps import apps
 
     # Convert language code to locale name for directory lookup
@@ -63,52 +124,11 @@ def get_all_po_paths(target_lang, app_labels=None):
     po_paths = []
     checked_paths = []
 
-    # Identify site-packages directories to exclude third-party apps
-    site_packages_dirs = {
-        Path(p).resolve()
-        for p in sys.path
-        if "site-packages" in p or "dist-packages" in p
-    }
-
-    # Check LOCALE_PATHS from settings (skip when filtering by app)
-    locale_paths = getattr(settings, "LOCALE_PATHS", [])
-    if not app_labels:
-        for locale_path in locale_paths:
-            po_path = Path(locale_path) / locale_name / "LC_MESSAGES" / "django.po"
-            checked_paths.append(str(po_path))
-            if po_path.exists():
-                po_paths.append(po_path)
-
-    # Check each installed app for locale directories
-    # (only project apps, not third-party)
-    for app_config in apps.get_app_configs():
-        # If filtering by app, skip apps not in the list
-        if app_labels and app_config.label not in app_labels:
-            continue
-
-        app_path = Path(app_config.path).resolve()
-
-        # Skip if app is in site-packages (third-party)
-        is_third_party = any(
-            str(app_path).startswith(str(site_pkg)) for site_pkg in site_packages_dirs
-        )
-
-        if not is_third_party:
-            app_locale_dir = app_path / "locale"
-            if app_locale_dir.exists():
-                po_path = app_locale_dir / locale_name / "LC_MESSAGES" / "django.po"
-                checked_paths.append(str(po_path))
-                if po_path.exists():
-                    po_paths.append(po_path)
-
-    # Check default locale directory in project root (skip when filtering by app)
-    if not app_labels and not locale_paths:
-        default_locale = Path("locale")
-        if default_locale.exists():
-            po_path = default_locale / locale_name / "LC_MESSAGES" / "django.po"
-            checked_paths.append(str(po_path))
-            if po_path.exists():
-                po_paths.append(po_path)
+    for locale_dir in _iter_locale_dirs(app_labels=app_labels):
+        po_path = locale_dir / locale_name / "LC_MESSAGES" / "django.po"
+        checked_paths.append(str(po_path))
+        if po_path.exists():
+            po_paths.append(po_path)
 
     if not po_paths:
         locations = "\n".join(f"  - {p}" for p in checked_paths)
