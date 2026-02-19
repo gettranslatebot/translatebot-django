@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-02-19
+
+### Added
+
+- Added `check_translations` management command for CI pipelines. Checks all `.po` files for missing or fuzzy translations, exiting with code 1 on failure. Includes an optional `--makemessages` flag to run `makemessages` before checking.
+
+### Changed
+
+- Refactored locale directory discovery into a shared `_iter_locale_dirs()` helper used by both `get_all_po_files()` and `get_all_po_paths()`
+- Default locale fallback now uses `settings.BASE_DIR` instead of a relative path
+
 ## [0.6.1] - 2026-02-18
 
 ### Added
@@ -240,6 +251,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[0.7.0]: https://github.com/gettranslatebot/translatebot-django/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/gettranslatebot/translatebot-django/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/gettranslatebot/translatebot-django/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/gettranslatebot/translatebot-django/compare/v0.4.0...v0.5.0
