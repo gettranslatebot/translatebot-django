@@ -187,7 +187,7 @@ class ModeltranslationBackend:
                             source_text = text
                             break
 
-                    if source_text:  # Only add if we found source content
+                    if source_text:
                         translatable_items.append(
                             {
                                 "model": model,

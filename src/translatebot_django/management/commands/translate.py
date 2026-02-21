@@ -121,8 +121,8 @@ def translate_text(text, target_lang, model, api_key, context=None):
     preamble = create_preamble(target_lang, len(text))
     system_prompt = build_system_prompt(context)
 
-    last_exception = None
-    for attempt in range(MAX_RETRIES):
+    attempt = 0
+    while True:
         try:
             response = completion(
                 model=model,
@@ -141,20 +141,19 @@ def translate_text(text, target_lang, model, api_key, context=None):
             )
             break  # Success, exit retry loop
         except RateLimitError as e:
-            last_exception = e
-            if attempt < MAX_RETRIES - 1:
-                # Exponential backoff: 60s, 120s, 240s, 480s
-                backoff = INITIAL_BACKOFF_SECONDS * (2**attempt)
-                logger.warning(
-                    "Rate limit hit, waiting %ds before retry (%d/%d)...",
-                    backoff,
-                    attempt + 1,
-                    MAX_RETRIES,
-                )
-                time.sleep(backoff)
-            else:
+            if attempt >= MAX_RETRIES - 1:
                 # All retries exhausted, re-raise the exception
-                raise last_exception from None
+                raise e from None
+            # Exponential backoff: 60s, 120s, 240s, 480s
+            backoff = INITIAL_BACKOFF_SECONDS * (2**attempt)
+            logger.warning(
+                "Rate limit hit, waiting %ds before retry (%d/%d)...",
+                backoff,
+                attempt + 1,
+                MAX_RETRIES,
+            )
+            time.sleep(backoff)
+            attempt += 1
 
     content = response.choices[0].message.content
     if content is None:
@@ -570,9 +569,7 @@ class Command(BaseCommand):
                 group_candidate = [item["source_text"]]
                 group_items = [item]
 
-        # Add the last group if it has content
-        if group_candidate:
-            groups.append((group_candidate, group_items))
+        groups.append((group_candidate, group_items))
 
         # Translate all groups
         if dry_run:
