@@ -489,6 +489,76 @@ def test_command_batches_large_input(temp_locale_dir, mocker):
     assert len(translated_entries) == num_entries
 
 
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_command_batches_empty_trailing_group(temp_locale_dir, mocker):
+    """Test batching when the last item triggers overflow, leaving no trailing group."""
+    nl_dir = temp_locale_dir / "nl" / "LC_MESSAGES"
+    nl_dir.mkdir(parents=True, exist_ok=True)
+    po_path = nl_dir / "django.po"
+
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po.append(polib.POEntry(msgid="Hello", msgstr=""))
+    po.append(polib.POEntry(msgid="World", msgstr=""))
+    po.save(str(po_path))
+
+    # max_tokens=1 ensures every item overflows, so group_candidate is [] at the end
+    mocker.patch(
+        "translatebot_django.management.commands.translate.get_max_tokens",
+        return_value=1,
+    )
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", dry_run=True, stdout=out)
+
+    output = out.getvalue()
+    assert "Would translate" in output
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_command_skips_save_when_no_changes_for_po_file(tmp_path, settings, mocker):
+    """Test that a fully translated PO file is skipped (no save) in non-dry-run mode."""
+    import json
+
+    # Two locale directories so the command finds two django.po files
+    locale1 = tmp_path / "locale1"
+    locale2 = tmp_path / "locale2"
+    settings.LOCALE_PATHS = [str(locale1), str(locale2)]
+
+    nl1 = locale1 / "nl" / "LC_MESSAGES"
+    nl1.mkdir(parents=True)
+    nl2 = locale2 / "nl" / "LC_MESSAGES"
+    nl2.mkdir(parents=True)
+
+    # File 1: has untranslated entries
+    po1 = polib.POFile()
+    po1.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po1.append(polib.POEntry(msgid="Hello", msgstr=""))
+    po1.save(str(nl1 / "django.po"))
+
+    # File 2: fully translated (no entries to translate)
+    po2 = polib.POFile()
+    po2.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po2.append(polib.POEntry(msgid="Already done", msgstr="Al gedaan"))
+    po2.save(str(nl2 / "django.po"))
+
+    mock_response = mocker.MagicMock()
+    mock_response.choices[0].message.content = json.dumps(["Hallo"])
+    mocker.patch(
+        "translatebot_django.management.commands.translate.completion",
+        return_value=mock_response,
+    )
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    output = out.getvalue()
+    # File 1 should be saved
+    assert "Successfully updated" in output
+    # Total should show 1 entry translated
+    assert "1 entries" in output
+
+
 def test_command_requires_target_lang_when_no_languages(
     settings, mock_env_api_key, temp_locale_dir
 ):

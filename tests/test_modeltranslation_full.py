@@ -190,3 +190,53 @@ class TestModeltranslationBackendWithDB:
         # All items should have non-empty source_text
         # This tests the double-check at lines 158-160
         assert all(item["source_text"] for item in items)
+
+    def test_backend_gather_skips_instance_with_all_empty_source_fields(self, mocker):
+        """Test that instances with no populated source fields are skipped."""
+        backend = ModeltranslationBackend(target_lang="nl")
+
+        # Create an article, then null out all source language fields
+        article = Article.objects.create(title="tmp", content="tmp")
+        Article.objects.filter(pk=article.pk).update(
+            title_en=None,
+            title_de=None,
+            content_en=None,
+            content_de=None,
+            description_en=None,
+            description_de=None,
+        )
+        article.refresh_from_db()
+
+        # Mock filter to return our empty article, simulating a TOCTOU
+        # where data changed after the queryset filter
+        mocker.patch.object(Article.objects, "filter", return_value=[article])
+
+        items = backend.gather_translatable_content(
+            model_list=[Article], only_empty=False
+        )
+        assert len(items) == 0
+
+    def test_backend_gather_skips_empty_first_source_lang(self):
+        """Test that gather falls through to second source lang when first is empty."""
+        # target_lang="nl", so source_langs = ["en", "de"]
+        backend = ModeltranslationBackend(target_lang="nl")
+
+        # Create article with en empty but de populated
+        article = Article.objects.create(title="placeholder", content="placeholder")
+        Article.objects.filter(pk=article.pk).update(
+            title_en="",
+            title_de="Deutscher Titel",
+            title_nl="",
+            content_en="",
+            content_de="Deutscher Inhalt",
+            content_nl="",
+        )
+
+        items = backend.gather_translatable_content(
+            model_list=[Article], only_empty=True
+        )
+
+        # Should find items using the German source text
+        source_texts = [item["source_text"] for item in items]
+        assert "Deutscher Titel" in source_texts
+        assert "Deutscher Inhalt" in source_texts
