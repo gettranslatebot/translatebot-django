@@ -402,11 +402,11 @@ class Command(BaseCommand):
                 if total + preamble_length + output_tokens_estimate > get_max_tokens(
                     model
                 ):
-                    groups.append(group_candidate)
-                    group_candidate = []
+                    if len(group_candidate) > 1:
+                        groups.append(group_candidate[:-1])
+                    group_candidate = [item]
 
-            if group_candidate:
-                groups.append(group_candidate)
+            groups.append(group_candidate)
 
             if dry_run:
                 for group in groups:
@@ -565,7 +565,8 @@ class Command(BaseCommand):
 
             if total + preamble_length + output_tokens_estimate > get_max_tokens(model):
                 # Group is full, save it and start a new one
-                groups.append((group_candidate[:-1], group_items[:-1]))
+                if len(group_candidate) > 1:
+                    groups.append((group_candidate[:-1], group_items[:-1]))
                 group_candidate = [item["source_text"]]
                 group_items = [item]
 
