@@ -57,7 +57,7 @@ python manage.py translate --target-lang nl --dry-run
 
 ## Features
 
-- **Multiple AI Providers**: OpenAI, Anthropic, Google Gemini, Azure, and [many more](https://docs.litellm.ai/docs/providers)
+- **Multiple AI Providers**: OpenAI, Anthropic, Google Gemini, Azure, [many more](https://docs.litellm.ai/docs/providers), and [DeepL](https://www.deepl.com/)
 - **Smart Translation**: Preserves placeholders (`%(name)s`, `{0}`, `%s`) and HTML tags
 - **Model Field Translation**: Supports [django-modeltranslation](https://github.com/deschler/django-modeltranslation)
 - **Flexible Configuration**: Django settings, environment variables, or CLI arguments
