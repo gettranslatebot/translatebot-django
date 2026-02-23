@@ -12,12 +12,12 @@ from litellm.exceptions import AuthenticationError, BadRequestError, RateLimitEr
 
 from django.core.management.base import BaseCommand, CommandError
 
+from translatebot_django.providers import get_provider
 from translatebot_django.utils import (
     combine_translation_contexts,
     get_all_po_paths,
     get_api_key,
     get_app_translation_context,
-    get_model,
     get_translation_context,
     is_modeltranslation_available,
 )
@@ -184,6 +184,36 @@ def translate_text(text, target_lang, model, api_key, context=None):
     return translated
 
 
+def batch_by_tokens(texts, target_lang, model):
+    """Split texts into token-sized groups for LLM translation.
+
+    Args:
+        texts: List of strings to split into batches.
+        target_lang: Target language code.
+        model: LLM model name (used for token limit lookup).
+
+    Returns:
+        List of lists of strings.
+    """
+    groups = []
+    group_candidate = []
+    for item in texts:
+        group_candidate += [item]
+
+        total = get_token_count(json.dumps(group_candidate, ensure_ascii=False))
+        output_tokens_estimate = total * 1.3
+        preamble = create_preamble(target_lang, len(group_candidate))
+        preamble_length = get_token_count(preamble)
+
+        if total + preamble_length + output_tokens_estimate > get_max_tokens(model):
+            if len(group_candidate) > 1:
+                groups.append(group_candidate[:-1])
+            group_candidate = [item]
+
+    groups.append(group_candidate)
+    return groups
+
+
 def gather_strings(po_path, only_empty=True):
     po = polib.pofile(str(po_path), wrapwidth=79)
     ret = []
@@ -297,15 +327,25 @@ class Command(BaseCommand):
                 "See: https://github.com/deschler/django-modeltranslation"
             )
 
-        model = get_model()
         api_key = get_api_key()
+        provider = get_provider(api_key)
 
         # Load translation context from TRANSLATING.md if available
         context = get_translation_context()
         if context:
-            self.stdout.write(
-                self.style.SUCCESS("📋 Found TRANSLATING.md - using project context")
-            )
+            if provider.supports_context:
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        "📋 Found TRANSLATING.md - using project context"
+                    )
+                )
+            else:
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"📋 Found TRANSLATING.md but {provider.name} does not "
+                        "support custom context - ignoring"
+                    )
+                )
 
         # Process each target language
         for lang in target_langs:
@@ -320,8 +360,7 @@ class Command(BaseCommand):
                     lang,
                     dry_run,
                     overwrite,
-                    model,
-                    api_key,
+                    provider,
                     context,
                     app_labels=app_labels,
                 )
@@ -332,8 +371,7 @@ class Command(BaseCommand):
                     target_lang=lang,
                     dry_run=dry_run,
                     overwrite=overwrite,
-                    model=model,
-                    api_key=api_key,
+                    provider=provider,
                     model_names=models_arg,
                     context=context,
                 )
@@ -353,8 +391,7 @@ class Command(BaseCommand):
         target_lang,
         dry_run,
         overwrite,
-        model,
-        api_key,
+        provider,
         context=None,
         app_labels=None,
     ):
@@ -368,9 +405,20 @@ class Command(BaseCommand):
             app_ctx = get_app_translation_context(po_path)
             if app_ctx:
                 app_dir = Path(po_path).resolve().parent.parent.parent.parent
-                self.stdout.write(
-                    self.style.SUCCESS(f"📋 Found TRANSLATING.md for {app_dir.name}")
-                )
+                if provider.supports_context:
+                    self.stdout.write(
+                        self.style.SUCCESS(
+                            f"📋 Found TRANSLATING.md for {app_dir.name}"
+                        )
+                    )
+                else:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f"📋 Found TRANSLATING.md for {app_dir.name} "
+                            f"but {provider.name} does not support custom "
+                            "context - ignoring"
+                        )
+                    )
             effective = combine_translation_contexts(context, app_ctx)
             context_groups[effective].append(po_path)
 
@@ -388,25 +436,7 @@ class Command(BaseCommand):
             if not all_msgids:
                 continue
 
-            # Split into token-sized groups
-            groups = []
-            group_candidate = []
-            for item in all_msgids:
-                group_candidate += [item]
-
-                total = get_token_count(json.dumps(group_candidate, ensure_ascii=False))
-                output_tokens_estimate = total * 1.3
-                preamble = create_preamble(target_lang, len(group_candidate))
-                preamble_length = get_token_count(preamble)
-
-                if total + preamble_length + output_tokens_estimate > get_max_tokens(
-                    model
-                ):
-                    if len(group_candidate) > 1:
-                        groups.append(group_candidate[:-1])
-                    group_candidate = [item]
-
-            groups.append(group_candidate)
+            groups = provider.batch(all_msgids, target_lang)
 
             if dry_run:
                 for group in groups:
@@ -415,11 +445,9 @@ class Command(BaseCommand):
             else:
                 with handle_api_errors():
                     for group in groups:
-                        translated = translate_text(
-                            text=group,
+                        translated = provider.translate(
+                            texts=group,
                             target_lang=target_lang,
-                            api_key=api_key,
-                            model=model,
                             context=effective_context,
                         )
                         for msgid, translation in zip(group, translated, strict=True):
@@ -444,9 +472,9 @@ class Command(BaseCommand):
         self.stdout.write(f"ℹ️  Found {total_msgids} untranslated entries")
 
         if dry_run:
-            self.stdout.write("🔍 Dry run mode: skipping LLM translation")
+            self.stdout.write("🔍 Dry run mode: skipping translation")
         else:
-            self.stdout.write(f"🔄 Translating with {model}...")
+            self.stdout.write(f"🔄 Translating with {provider.name}...")
 
         # Now we have all the msgid -> translation mappings, we can proceed
         # with putting them into the .po files
@@ -504,8 +532,7 @@ class Command(BaseCommand):
         target_lang,
         dry_run,
         overwrite,
-        model,
-        api_key,
+        provider,
         model_names=None,
         context=None,
     ):
@@ -549,33 +576,21 @@ class Command(BaseCommand):
         for model_name, count in by_model.items():
             self.stdout.write(f"  • {model_name}: {count} field(s)")
 
-        # Group items by token limits (same strategy as PO files)
+        # Batch the source texts using the provider's batching strategy
+        source_texts = [item["source_text"] for item in items]
+        text_batches = provider.batch(source_texts, target_lang)
+
+        # Re-associate batched texts with their items
         groups = []
-        group_candidate = []
-        group_items = []
-
-        for item in items:
-            group_candidate.append(item["source_text"])
-            group_items.append(item)
-
-            total = get_token_count(json.dumps(group_candidate, ensure_ascii=False))
-            output_tokens_estimate = total * 1.3
-            preamble = create_preamble(target_lang, len(group_candidate))
-            preamble_length = get_token_count(preamble)
-
-            if total + preamble_length + output_tokens_estimate > get_max_tokens(model):
-                # Group is full, save it and start a new one
-                if len(group_candidate) > 1:
-                    groups.append((group_candidate[:-1], group_items[:-1]))
-                group_candidate = [item["source_text"]]
-                group_items = [item]
-
-        groups.append((group_candidate, group_items))
+        item_idx = 0
+        for text_batch in text_batches:
+            batch_items = items[item_idx : item_idx + len(text_batch)]
+            groups.append((text_batch, batch_items))
+            item_idx += len(text_batch)
 
         # Translate all groups
         if dry_run:
-            self.stdout.write("🔍 Dry run mode: skipping LLM translation")
-            # In dry run, create placeholder translation items for counting
+            self.stdout.write("🔍 Dry run mode: skipping translation")
             translation_items = []
             for _texts_group, items_group in groups:
                 for item in items_group:
@@ -583,23 +598,23 @@ class Command(BaseCommand):
                         {
                             "instance": item["instance"],
                             "target_field": item["target_field"],
-                            "translation": "",  # Placeholder for dry run
+                            "translation": "",
                         }
                     )
         else:
             batch_count = len(groups)
             self.stdout.write(
-                f"🔄 Translating model fields with {model} ({batch_count} batches)..."
+                f"🔄 Translating model fields with {provider.name} "
+                f"({batch_count} batches)..."
             )
 
             translation_items = []
             with handle_api_errors():
                 for texts_group, items_group in groups:
-                    translations = translate_text(
-                        texts_group, target_lang, model, api_key, context=context
+                    translations = provider.translate(
+                        texts_group, target_lang, context=context
                     )
 
-                    # Prepare translation items for this group
                     pairs = zip(items_group, translations, strict=True)
                     for item, translation in pairs:
                         translation_items.append(
@@ -610,7 +625,6 @@ class Command(BaseCommand):
                             }
                         )
 
-                        # Show sample translations
                         model_name = item["model"].__name__
                         field_name = item["field"]
                         source_preview = item["source_text"][:50]

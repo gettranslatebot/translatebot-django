@@ -426,6 +426,18 @@ toml = [
 ]
 
 [[package]]
+name = "deepl"
+version = "1.28.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/19/50/250fcdf450b35139df0521e2578eef898e4705ebb772680f9b782676f510/deepl-1.28.0.tar.gz", hash = "sha256:7b35816ca8ff40609746586145ec3e9d7c758b546f353ea73f24118e56a1fdad", size = 51260, upload-time = "2026-02-05T19:28:19.025Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b9/33/17c72c38d4f696a8de2af26a301235b99002e0cc5f9a2c4210f060d67290/deepl-1.28.0-py3-none-any.whl", hash = "sha256:d43ae248f74a81150765e303cc62aef7d2ddbf40f2d5454a6b4cf3f54ac69619", size = 46268, upload-time = "2026-02-05T19:28:17.783Z" },
+]
+
+[[package]]
 name = "distro"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2078,7 +2090,11 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+deepl = [
+    { name = "deepl" },
+]
 dev = [
+    { name = "deepl" },
     { name = "django-modeltranslation" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -2092,6 +2108,8 @@ modeltranslation = [
 
 [package.metadata]
 requires-dist = [
+    { name = "deepl", marker = "extra == 'deepl'", specifier = ">=1.0.0" },
+    { name = "deepl", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "django", specifier = ">=4.2" },
     { name = "django-modeltranslation", marker = "extra == 'dev'", specifier = ">=0.18" },
     { name = "django-modeltranslation", marker = "extra == 'modeltranslation'", specifier = ">=0.18" },
@@ -2103,7 +2121,7 @@ requires-dist = [
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.10.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
 ]
-provides-extras = ["dev", "modeltranslation"]
+provides-extras = ["dev", "deepl", "modeltranslation"]
 
 [[package]]
 name = "typer-slim"
