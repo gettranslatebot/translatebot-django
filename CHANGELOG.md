@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-02-23
+
+### Added
+
+- Added DeepL translation provider as an alternative to LiteLLM. Configure via `TRANSLATEBOT_PROVIDER = 'deepl'` setting. Supports language code mapping, batching respecting DeepL limits, and comprehensive error handling.
+- Introduced `TranslationProvider` ABC for extensible provider architecture
+- Added `deepl` optional dependency group (`pip install translatebot-django[deepl]`)
+
+### Changed
+
+- Refactored translation command to use provider abstraction for extensibility
+- Extracted `batch_by_tokens()` as a reusable utility function
+- Updated litellm from 1.81.13 to 1.81.14
+
 ## [0.7.1] - 2026-02-21
 
 ### Fixed
@@ -262,6 +276,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[0.8.0]: https://github.com/gettranslatebot/translatebot-django/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/gettranslatebot/translatebot-django/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/gettranslatebot/translatebot-django/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/gettranslatebot/translatebot-django/compare/v0.6.0...v0.6.1
