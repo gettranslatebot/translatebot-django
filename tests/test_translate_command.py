@@ -1981,3 +1981,104 @@ def test_command_output_shows_per_app_context_message(tmp_path, settings, mocker
 
     output = out.getvalue()
     assert "Found TRANSLATING.md for medical_app" in output
+
+
+# --- DeepL integration tests ---
+
+
+@pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key")
+def test_command_deepl_provider_end_to_end(sample_po_file, settings, mocker):
+    """Test end-to-end translation with DeepL provider."""
+    from unittest.mock import MagicMock
+
+    settings.TRANSLATEBOT_PROVIDER = "deepl"
+
+    mock_result_1 = MagicMock()
+    mock_result_1.text = "Hallo, wereld!"
+    mock_result_2 = MagicMock()
+    mock_result_2.text = "Welkom bij %(site_name)s"
+
+    mock_translator = MagicMock()
+    mock_translator.translate_text.return_value = [mock_result_1, mock_result_2]
+
+    mocker.patch("deepl.Translator", return_value=mock_translator)
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    output = out.getvalue()
+    assert "Translating with DeepL" in output
+
+    po = polib.pofile(str(sample_po_file))
+    hello = [e for e in po if e.msgid == "Hello, world!"][0]
+    assert hello.msgstr == "Hallo, wereld!"
+
+    # Verify the translator was called with correct DeepL language code
+    mock_translator.translate_text.assert_called_once()
+    call_args = mock_translator.translate_text.call_args
+    assert call_args[1]["target_lang"] == "NL"
+
+
+@pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key")
+def test_command_deepl_translating_md_warning(
+    sample_po_file, settings, tmp_path, mocker
+):
+    """Test that TRANSLATING.md triggers a warning with DeepL provider."""
+    from unittest.mock import MagicMock
+
+    settings.TRANSLATEBOT_PROVIDER = "deepl"
+    settings.BASE_DIR = tmp_path
+    context_file = tmp_path / "TRANSLATING.md"
+    context_file.write_text("Project-specific context.")
+
+    mock_result = MagicMock()
+    mock_result.text = "Vertaald"
+    mock_translator = MagicMock()
+    mock_translator.translate_text.return_value = [mock_result, mock_result]
+    mocker.patch("deepl.Translator", return_value=mock_translator)
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    output = out.getvalue()
+    assert "does not support custom context" in output
+
+
+@pytest.mark.usefixtures("mock_env_api_key")
+def test_command_deepl_per_app_translating_md_warning(tmp_path, settings, mocker):
+    """Test that per-app TRANSLATING.md triggers a warning with DeepL provider."""
+    from unittest.mock import MagicMock
+
+    settings.TRANSLATEBOT_PROVIDER = "deepl"
+    settings.BASE_DIR = tmp_path
+    settings.LOCALE_PATHS = []
+
+    # Create an app with a TRANSLATING.md
+    app_path = tmp_path / "medical_app"
+    app_locale = app_path / "locale" / "nl" / "LC_MESSAGES"
+    app_locale.mkdir(parents=True)
+    app_po = app_locale / "django.po"
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po.append(polib.POEntry(msgid="Diagnosis", msgstr=""))
+    po.save(str(app_po))
+
+    (app_path / "TRANSLATING.md").write_text("Medical terminology.")
+
+    mock_app = mocker.MagicMock()
+    mock_app.path = str(app_path)
+    mock_app.label = "medical_app"
+    mocker.patch("django.apps.apps.get_app_configs", return_value=[mock_app])
+
+    mock_result = MagicMock()
+    mock_result.text = "Diagnose"
+    mock_translator = MagicMock()
+    mock_translator.translate_text.return_value = [mock_result]
+    mocker.patch("deepl.Translator", return_value=mock_translator)
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    output = out.getvalue()
+    assert "Found TRANSLATING.md for medical_app" in output
+    assert "does not support custom context" in output

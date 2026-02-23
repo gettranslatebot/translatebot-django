@@ -54,6 +54,10 @@ dev = [
   "pytest-cov>=4.0.0",
   "ruff>=0.8.0",
   "django-modeltranslation>=0.18",
+  "deepl>=1.0.0",
+]
+deepl = [
+  "deepl>=1.0.0",
 ]
 modeltranslation = [
   "django-modeltranslation>=0.18",

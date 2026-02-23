@@ -201,7 +201,7 @@ def test_translate_command_models_batching(settings, mock_env_api_key, mocker):
     # Mock translate_text to return translations for each batch
     translate_mock = mocker.patch(
         "translatebot_django.management.commands.translate.translate_text",
-        side_effect=lambda text, _target_lang, _model, _api_key, **_kwargs: [
+        side_effect=lambda text, **_kwargs: [
             f"Translated {i}" for i in range(len(text))
         ],
     )
