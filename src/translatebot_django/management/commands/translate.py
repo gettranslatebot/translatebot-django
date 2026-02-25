@@ -6,11 +6,35 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import polib
-import tiktoken
-from litellm import completion, get_max_tokens
-from litellm.exceptions import AuthenticationError, BadRequestError, RateLimitError
 
 from django.core.management.base import BaseCommand, CommandError
+
+try:
+    import tiktoken
+    from litellm import completion, get_max_tokens
+    from litellm.exceptions import (
+        AuthenticationError,
+        BadRequestError,
+        RateLimitError,
+    )
+
+    _has_litellm = True
+except ImportError:
+    _has_litellm = False
+    completion = None  # type: ignore[assignment]
+    get_max_tokens = None  # type: ignore[assignment]
+
+    # Sentinel classes so except clauses are syntactically valid.
+    # They can never be raised when litellm is absent.
+    class AuthenticationError(Exception):  # type: ignore[no-redef]
+        pass
+
+    class BadRequestError(Exception):  # type: ignore[no-redef]
+        pass
+
+    class RateLimitError(Exception):  # type: ignore[no-redef]
+        pass
+
 
 from translatebot_django.providers import get_provider
 from translatebot_django.utils import (
@@ -27,6 +51,18 @@ logger = logging.getLogger(__name__)
 # Retry configuration for rate limit errors
 MAX_RETRIES = 5
 INITIAL_BACKOFF_SECONDS = 60  # Start with 60 seconds since rate limit is per minute
+
+
+_LITELLM_MISSING_MSG = (
+    "The 'litellm' package is required to use LLM translation providers.\n"
+    "Install it with: pip install translatebot-django[litellm]"
+)
+
+
+def _require_litellm():
+    """Raise CommandError if litellm is not installed."""
+    if not _has_litellm:
+        raise CommandError(_LITELLM_MISSING_MSG)
 
 
 @contextmanager
@@ -76,7 +112,7 @@ BASE_SYSTEM_PROMPT = (
 
 # Alias for backward compatibility
 SYSTEM_PROMPT = BASE_SYSTEM_PROMPT
-SYSTEM_PROMPT_LENGTH = get_token_count(BASE_SYSTEM_PROMPT)
+SYSTEM_PROMPT_LENGTH = get_token_count(BASE_SYSTEM_PROMPT) if _has_litellm else 0
 
 
 def build_system_prompt(context=None):
@@ -118,6 +154,7 @@ def translate_text(text, target_lang, model, api_key, context=None):
         api_key: API key for the LLM provider
         context: Optional translation context from TRANSLATING.md
     """
+    _require_litellm()
     preamble = create_preamble(target_lang, len(text))
     system_prompt = build_system_prompt(context)
 
@@ -195,6 +232,7 @@ def batch_by_tokens(texts, target_lang, model):
     Returns:
         List of lists of strings.
     """
+    _require_litellm()
     groups = []
     group_candidate = []
     for item in texts:
