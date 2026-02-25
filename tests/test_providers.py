@@ -233,7 +233,7 @@ def test_deepl_translate_basic(mocker):
 
 
 def test_deepl_translate_strips_trailing_dot():
-    """DeepLProvider.translate strips trailing dot added by DeepL when source has none."""
+    """Strip trailing dot added by DeepL when source has none."""
     from translatebot_django.providers.deepl import DeepLProvider
 
     provider = DeepLProvider(api_key="test-key")
@@ -251,12 +251,12 @@ def test_deepl_translate_strips_trailing_dot():
 
     result = provider.translate(sources, "de")
     assert result == [
-        "Hallo",   # source no dot, translation dot -> stripped
-        "Welt",    # source no dot, translation dot -> stripped
-        "Fertig.", # source has dot, translation dot -> kept
-        ".",       # source is just a dot -> kept
-        "Gut",     # neither has dot -> no change
-        "",        # empty strings -> no change
+        "Hallo",  # source no dot, translation dot -> stripped
+        "Welt",  # source no dot, translation dot -> stripped
+        "Fertig.",  # source has dot, translation dot -> kept
+        ".",  # source is just a dot -> kept
+        "Gut",  # neither has dot -> no change
+        "",  # empty strings -> no change
     ]
 
 

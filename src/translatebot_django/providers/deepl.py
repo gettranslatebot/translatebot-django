@@ -82,7 +82,7 @@ class DeepLProvider(TranslationProvider):
 
         # DeepL sometimes adds a trailing dot to translations even when the
         # source string does not end with one.  Strip it in that case.
-        for i, (src, trl) in enumerate(zip(texts, translations)):
+        for i, (src, trl) in enumerate(zip(texts, translations, strict=True)):
             if not src.endswith(".") and trl.endswith("."):
                 translations[i] = trl[:-1]
 
