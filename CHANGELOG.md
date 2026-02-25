@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-02-25
+
+### Added
+
+- LiteLLM is now fully optional. DeepL-only users can uninstall `litellm` to reduce dependency footprint. Attempting to use an LLM provider without litellm installed raises a clear error with install instructions.
+
+### Fixed
+
+- Fixed plural forms (`msgid_plural` / `msgstr[n]`) being silently ignored during translation. Plural entries are now properly translated and already-translated plurals are correctly skipped.
+- Fixed DeepL occasionally appending a trailing period to translated strings when the source string does not end with one.
+
+### Changed
+
+- Updated litellm from 1.81.14 to 1.81.15
+
 ## [0.8.0] - 2026-02-23
 
 ### Added
@@ -276,6 +291,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[0.8.1]: https://github.com/gettranslatebot/translatebot-django/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/gettranslatebot/translatebot-django/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/gettranslatebot/translatebot-django/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/gettranslatebot/translatebot-django/compare/v0.6.1...v0.7.0
