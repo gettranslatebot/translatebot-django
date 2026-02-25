@@ -58,6 +58,13 @@ def get_provider(api_key):
     provider_name = getattr(settings, "TRANSLATEBOT_PROVIDER", "litellm")
 
     if provider_name == "litellm":
+        from translatebot_django.management.commands.translate import (
+            _LITELLM_MISSING_MSG,
+            _has_litellm,
+        )
+
+        if not _has_litellm:
+            raise CommandError(_LITELLM_MISSING_MSG)
         from translatebot_django.providers.litellm import LiteLLMProvider
         from translatebot_django.utils import get_model
 

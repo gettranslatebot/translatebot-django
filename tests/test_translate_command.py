@@ -2082,3 +2082,68 @@ def test_command_deepl_per_app_translating_md_warning(tmp_path, settings, mocker
     output = out.getvalue()
     assert "Found TRANSLATING.md for medical_app" in output
     assert "does not support custom context" in output
+
+
+# --- Tests for litellm being absent ---
+
+
+def test_get_provider_litellm_missing_raises_error(settings, mocker):
+    """Test that get_provider raises CommandError when litellm is not installed."""
+    settings.TRANSLATEBOT_PROVIDER = "litellm"
+    mocker.patch(
+        "translatebot_django.management.commands.translate._has_litellm", False
+    )
+
+    from translatebot_django.providers import get_provider
+
+    with pytest.raises(CommandError, match="pip install translatebot-django"):
+        get_provider(api_key="test-key")
+
+
+def test_translate_text_litellm_missing_raises_error(mocker):
+    """Test that translate_text raises CommandError when litellm is not installed."""
+    mocker.patch(
+        "translatebot_django.management.commands.translate._has_litellm", False
+    )
+
+    with pytest.raises(CommandError, match="litellm"):
+        translate_text(
+            text=["Hello"],
+            target_lang="nl",
+            model="gpt-4o-mini",
+            api_key="test-key",
+        )
+
+
+def test_batch_by_tokens_litellm_missing_raises_error(mocker):
+    """Test that batch_by_tokens raises CommandError when litellm is not installed."""
+    from translatebot_django.management.commands.translate import batch_by_tokens
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate._has_litellm", False
+    )
+
+    with pytest.raises(CommandError, match="litellm"):
+        batch_by_tokens(texts=["Hello"], target_lang="nl", model="gpt-4o-mini")
+
+
+def test_deepl_provider_works_without_litellm(
+    sample_po_file, settings, mock_env_api_key, mocker
+):
+    """Test that the DeepL provider works even when litellm is absent."""
+    from unittest.mock import MagicMock
+
+    settings.TRANSLATEBOT_PROVIDER = "deepl"
+    mocker.patch.dict("sys.modules", {"litellm": None})
+
+    mock_translator = MagicMock()
+    mock_translator.translate_text.side_effect = lambda texts, **_kw: [
+        MagicMock(text=f"translated: {t}") for t in texts
+    ]
+    mocker.patch("deepl.Translator", return_value=mock_translator)
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    output = out.getvalue()
+    assert "Successfully translated" in output
