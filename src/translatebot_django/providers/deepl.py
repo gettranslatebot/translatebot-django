@@ -78,7 +78,15 @@ class DeepLProvider(TranslationProvider):
         except self._deepl.DeepLException as e:
             raise CommandError(f"DeepL API error: {e}") from e
 
-        return [r.text for r in results]
+        translations = [r.text for r in results]
+
+        # DeepL sometimes adds a trailing dot to translations even when the
+        # source string does not end with one.  Strip it in that case.
+        for i, (src, trl) in enumerate(zip(texts, translations, strict=True)):
+            if not src.endswith(".") and trl.endswith("."):
+                translations[i] = trl[:-1]
+
+        return translations
 
     def batch(self, texts, target_lang):
         """Split texts into batches respecting DeepL API limits.

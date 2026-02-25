@@ -232,6 +232,34 @@ def test_deepl_translate_basic(mocker):
     )
 
 
+def test_deepl_translate_strips_trailing_dot():
+    """Strip trailing dot added by DeepL when source has none."""
+    from translatebot_django.providers.deepl import DeepLProvider
+
+    provider = DeepLProvider(api_key="test-key")
+
+    sources = ["Hello", "World", "Done.", ".", "OK", ""]
+    raw_translations = ["Hallo.", "Welt.", "Fertig.", ".", "Gut", ""]
+
+    mock_results = []
+    for text in raw_translations:
+        m = MagicMock()
+        m.text = text
+        mock_results.append(m)
+
+    provider._translator.translate_text = MagicMock(return_value=mock_results)
+
+    result = provider.translate(sources, "de")
+    assert result == [
+        "Hallo",  # source no dot, translation dot -> stripped
+        "Welt",  # source no dot, translation dot -> stripped
+        "Fertig.",  # source has dot, translation dot -> kept
+        ".",  # source is just a dot -> kept
+        "Gut",  # neither has dot -> no change
+        "",  # empty strings -> no change
+    ]
+
+
 def test_deepl_translate_uses_mapped_lang(mocker):
     """DeepLProvider.translate converts language codes for the API."""
     from translatebot_django.providers.deepl import DeepLProvider
