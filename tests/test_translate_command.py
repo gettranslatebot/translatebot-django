@@ -420,6 +420,155 @@ def test_command_translates_fuzzy_entries(temp_locale_dir, mock_completion):
     assert not entry.fuzzy, "Fuzzy flag should be cleared after translation"
 
 
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_command_translates_plural_entries(temp_locale_dir, mock_completion):
+    """Test that plural entries (msgid_plural / msgstr[n]) are translated."""
+    test_lang = temp_locale_dir / "test" / "LC_MESSAGES"
+    test_lang.mkdir(parents=True)
+    po_path = test_lang / "django.po"
+
+    po = polib.POFile()
+    po.metadata = {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Plural-Forms": "nplurals=2; plural=(n != 1);",
+    }
+    plural_entry = polib.POEntry(
+        msgid="%(count)d item",
+        msgid_plural="%(count)d items",
+        msgstr_plural={0: "", 1: ""},
+    )
+    po.append(plural_entry)
+    po.save(str(po_path))
+
+    def translate_fn(s):
+        return {
+            "%(count)d item": "%(count)d artikel",
+            "%(count)d items": "%(count)d artikelen",
+        }[s]
+
+    mock_completion(translate_fn)
+
+    call_command("translate", target_lang="test")
+
+    po = polib.pofile(str(po_path))
+    entry = [e for e in po if e.msgid == "%(count)d item"][0]
+    assert entry.msgstr_plural[0] == "%(count)d artikel"
+    assert entry.msgstr_plural[1] == "%(count)d artikelen"
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_command_skips_already_translated_plural_entries(
+    temp_locale_dir, mock_completion
+):
+    """Test that already-translated plural entries are skipped."""
+    test_lang = temp_locale_dir / "test" / "LC_MESSAGES"
+    test_lang.mkdir(parents=True)
+    po_path = test_lang / "django.po"
+
+    po = polib.POFile()
+    po.metadata = {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Plural-Forms": "nplurals=2; plural=(n != 1);",
+    }
+    plural_entry = polib.POEntry(
+        msgid="%(count)d item",
+        msgid_plural="%(count)d items",
+        msgstr_plural={0: "%(count)d artikel", 1: "%(count)d artikelen"},
+    )
+    po.append(plural_entry)
+    po.save(str(po_path))
+
+    mock_completion("Zou niet moeten verschijnen")
+
+    out = StringIO()
+    call_command("translate", target_lang="test", stdout=out)
+
+    # Entry should remain unchanged
+    po = polib.pofile(str(po_path))
+    entry = [e for e in po if e.msgid == "%(count)d item"][0]
+    assert entry.msgstr_plural[0] == "%(count)d artikel"
+    assert entry.msgstr_plural[1] == "%(count)d artikelen"
+    assert "Already up to date" in out.getvalue()
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_command_translates_fuzzy_plural_entries(temp_locale_dir, mock_completion):
+    """Test that fuzzy plural entries are re-translated and flag is cleared."""
+    test_lang = temp_locale_dir / "test" / "LC_MESSAGES"
+    test_lang.mkdir(parents=True)
+    po_path = test_lang / "django.po"
+
+    po = polib.POFile()
+    po.metadata = {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Plural-Forms": "nplurals=2; plural=(n != 1);",
+    }
+    plural_entry = polib.POEntry(
+        msgid="%(count)d item",
+        msgid_plural="%(count)d items",
+        msgstr_plural={0: "old singular", 1: "old plural"},
+    )
+    plural_entry.flags.append("fuzzy")
+    po.append(plural_entry)
+    po.save(str(po_path))
+
+    def translate_fn(s):
+        return {
+            "%(count)d item": "%(count)d artikel",
+            "%(count)d items": "%(count)d artikelen",
+        }[s]
+
+    mock_completion(translate_fn)
+
+    call_command("translate", target_lang="test")
+
+    po = polib.pofile(str(po_path))
+    entry = [e for e in po if e.msgid == "%(count)d item"][0]
+    assert entry.msgstr_plural[0] == "%(count)d artikel"
+    assert entry.msgstr_plural[1] == "%(count)d artikelen"
+    assert not entry.fuzzy
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_command_translates_plural_entries_nplurals_3(temp_locale_dir, mock_completion):
+    """Test plural translation for languages with 3 plural forms (e.g. Polish)."""
+    test_lang = temp_locale_dir / "test" / "LC_MESSAGES"
+    test_lang.mkdir(parents=True)
+    po_path = test_lang / "django.po"
+
+    po = polib.POFile()
+    po.metadata = {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Plural-Forms": (
+            "nplurals=3; plural=(n==1 ? 0 : n%10>=2 && n%10<=4 "
+            "&& (n%100<10 || n%100>=20) ? 1 : 2);"
+        ),
+    }
+    plural_entry = polib.POEntry(
+        msgid="%(count)d item",
+        msgid_plural="%(count)d items",
+        msgstr_plural={0: "", 1: "", 2: ""},
+    )
+    po.append(plural_entry)
+    po.save(str(po_path))
+
+    def translate_fn(s):
+        return {
+            "%(count)d item": "%(count)d element",
+            "%(count)d items": "%(count)d elementów",
+        }[s]
+
+    mock_completion(translate_fn)
+
+    call_command("translate", target_lang="test")
+
+    po = polib.pofile(str(po_path))
+    entry = [e for e in po if e.msgid == "%(count)d item"][0]
+    assert entry.msgstr_plural[0] == "%(count)d element"
+    assert entry.msgstr_plural[1] == "%(count)d elementów"
+    assert entry.msgstr_plural[2] == "%(count)d elementów"
+
+
 @pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
 def test_command_output_messages(sample_po_file, mock_completion):
     """Test that command outputs appropriate messages."""
