@@ -255,16 +255,27 @@ def batch_by_tokens(texts, target_lang, model):
 def gather_strings(po_path, only_empty=True):
     po = polib.pofile(str(po_path), wrapwidth=79)
     ret = []
+    seen = set()
 
     for entry in po:
         if not entry.msgid or entry.obsolete:
             continue
 
-        # Skip entries with translations unless they're fuzzy or only_empty is True
-        if entry.msgstr and not only_empty and not entry.fuzzy:
-            continue
+        if entry.msgid_plural:
+            # Plural entry: check msgstr_plural values instead of msgstr
+            has_translation = entry.msgstr_plural and all(entry.msgstr_plural.values())
+            if has_translation and not only_empty and not entry.fuzzy:
+                continue
+            for s in (entry.msgid, entry.msgid_plural):
+                if s not in seen:
+                    seen.add(s)
+                    ret.append(s)
+        else:
+            # Skip entries with translations unless they're fuzzy or only_empty is True
+            if entry.msgstr and not only_empty and not entry.fuzzy:
+                continue
+            ret.append(entry.msgid)
 
-        ret.append(entry.msgid)
     return ret
 
 
@@ -524,12 +535,19 @@ class Command(BaseCommand):
 
             for entry in po:
                 if entry.msgid in msgid_to_translation:
-                    translation = msgid_to_translation[entry.msgid]
                     if dry_run:
                         self.stdout.write(f"✓ Would translate '{entry.msgid[:50]}'")
                     else:
                         self.stdout.write(f"✓ Translated '{entry.msgid[:50]}'")
-                        entry.msgstr = translation
+                        if entry.msgid_plural:
+                            singular = msgid_to_translation[entry.msgid]
+                            plural = msgid_to_translation.get(
+                                entry.msgid_plural, singular
+                            )
+                            for i in entry.msgstr_plural:
+                                entry.msgstr_plural[i] = singular if i == 0 else plural
+                        else:
+                            entry.msgstr = msgid_to_translation[entry.msgid]
                         # Clear fuzzy flag since we have a fresh translation
                         if entry.fuzzy:
                             entry.flags.remove("fuzzy")
