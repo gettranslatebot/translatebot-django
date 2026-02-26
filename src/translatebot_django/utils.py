@@ -5,6 +5,8 @@ from django.conf import settings
 from django.core.management.base import CommandError
 from django.utils.translation import to_locale
 
+PO_FILENAMES = ("django.po", "djangojs.po")
+
 
 def get_model():
     """Get default model from the Django settings or use fallback."""
@@ -87,8 +89,9 @@ def get_all_po_files():
     """
     po_files = set()
     for locale_dir in _iter_locale_dirs():
-        for po_path in locale_dir.glob("*/LC_MESSAGES/django.po"):
-            po_files.add(po_path.resolve())
+        for filename in PO_FILENAMES:
+            for po_path in locale_dir.glob(f"*/LC_MESSAGES/{filename}"):
+                po_files.add(po_path.resolve())
     return sorted(po_files)
 
 
@@ -125,10 +128,11 @@ def get_all_po_paths(target_lang, app_labels=None):
     checked_paths = []
 
     for locale_dir in _iter_locale_dirs(app_labels=app_labels):
-        po_path = locale_dir / locale_name / "LC_MESSAGES" / "django.po"
-        checked_paths.append(str(po_path))
-        if po_path.exists():
-            po_paths.append(po_path)
+        for filename in PO_FILENAMES:
+            po_path = locale_dir / locale_name / "LC_MESSAGES" / filename
+            checked_paths.append(str(po_path))
+            if po_path.exists():
+                po_paths.append(po_path)
 
     if not po_paths:
         locations = "\n".join(f"  - {p}" for p in checked_paths)
@@ -202,14 +206,14 @@ def get_app_translation_context(po_path):
     Find and read a TRANSLATING.md file from the app directory containing the .po file.
 
     Expects the standard Django app locale structure:
-    {app_dir}/locale/{lang}/LC_MESSAGES/django.po
+    {app_dir}/locale/{lang}/LC_MESSAGES/{django,djangojs}.po
 
     Skips if the path doesn't match this structure (e.g. LOCALE_PATHS entries),
     or if app_dir matches settings.BASE_DIR or Path.cwd() to avoid
     duplicating the project-level context.
 
     Args:
-        po_path: Path to a django.po file
+        po_path: Path to a .po file (django.po or djangojs.po)
 
     Returns:
         str or None: The contents of the app's TRANSLATING.md if found, None otherwise.
@@ -217,7 +221,7 @@ def get_app_translation_context(po_path):
     po_path = Path(po_path).resolve()
 
     # Validate expected Django app locale structure:
-    # {app}/locale/{lang}/LC_MESSAGES/django.po
+    # {app}/locale/{lang}/LC_MESSAGES/{django,djangojs}.po
     if (
         po_path.parent.name != "LC_MESSAGES"
         or po_path.parent.parent.parent.name != "locale"
