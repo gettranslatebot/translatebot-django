@@ -2296,3 +2296,71 @@ def test_deepl_provider_works_without_litellm(
 
     output = out.getvalue()
     assert "Successfully translated" in output
+
+
+# --- Test for litellm ImportError fallback (lines 22-36) ---
+
+
+def test_litellm_import_error_creates_sentinel_classes():
+    """Test that sentinel classes are created when litellm is not importable."""
+    import importlib
+    import sys
+
+    import translatebot_django.management.commands.translate as translate_mod
+
+    # Block litellm and tiktoken so the try block raises ImportError
+    blocked = {"tiktoken": None, "litellm": None, "litellm.exceptions": None}
+    original_modules = {k: sys.modules.get(k) for k in blocked}
+    sys.modules.update(blocked)
+    try:
+        importlib.reload(translate_mod)
+
+        assert translate_mod._has_litellm is False
+        assert translate_mod.completion is None
+        assert translate_mod.get_max_tokens is None
+        assert issubclass(translate_mod.AuthenticationError, Exception)
+        assert issubclass(translate_mod.BadRequestError, Exception)
+        assert issubclass(translate_mod.RateLimitError, Exception)
+    finally:
+        # Restore original module entries and reload to reset state
+        for k, v in original_modules.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+        importlib.reload(translate_mod)
+
+
+# --- Test for plural deduplication branch (line 270→269) ---
+
+
+def test_gather_strings_deduplicates_shared_plural_msgids(tmp_path):
+    """Test that gather_strings deduplicates when plural entries share msgid strings."""
+    from translatebot_django.management.commands.translate import gather_strings
+
+    po_path = tmp_path / "django.po"
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+
+    # entry1.msgid_plural == entry2.msgid → triggers dedup branch
+    entry1 = polib.POEntry(
+        msgid="%(count)d item",
+        msgid_plural="%(count)d items",
+        msgstr_plural={0: "", 1: ""},
+    )
+    entry2 = polib.POEntry(
+        msgid="%(count)d items",
+        msgid_plural="%(count)d more items",
+        msgstr_plural={0: "", 1: ""},
+    )
+    po.append(entry1)
+    po.append(entry2)
+    po.save(str(po_path))
+
+    strings = gather_strings(po_path)
+    # "%(count)d items" should appear only once despite being in both entries
+    assert strings == [
+        "%(count)d item",
+        "%(count)d items",
+        "%(count)d more items",
+    ]
