@@ -53,6 +53,54 @@ class TestCheckTranslationsCommand:
         assert "OK" in output
         assert "All translations complete" in output
 
+    def test_djangojs_po_checked(self, tmp_path, settings, mocker):
+        """Test that djangojs.po files are also checked."""
+        locale_dir = tmp_path / "locale"
+        nl_dir = locale_dir / "nl" / "LC_MESSAGES"
+        nl_dir.mkdir(parents=True)
+        _create_po_file(
+            nl_dir / "django.po",
+            [{"msgid": "Hello", "msgstr": "Hallo"}],
+        )
+        _create_po_file(
+            nl_dir / "djangojs.po",
+            [{"msgid": "Click here", "msgstr": ""}],
+        )
+
+        settings.LOCALE_PATHS = [str(locale_dir)]
+        mocker.patch("django.apps.apps.get_app_configs", return_value=[])
+
+        stderr = StringIO()
+        with pytest.raises(CommandError, match="Translation check failed"):
+            call_command("check_translations", stderr=stderr)
+
+        output = stderr.getvalue()
+        assert "1 untranslated" in output
+
+    def test_djangojs_po_complete(self, tmp_path, settings, mocker):
+        """Test success when both django.po and djangojs.po are complete."""
+        locale_dir = tmp_path / "locale"
+        nl_dir = locale_dir / "nl" / "LC_MESSAGES"
+        nl_dir.mkdir(parents=True)
+        _create_po_file(
+            nl_dir / "django.po",
+            [{"msgid": "Hello", "msgstr": "Hallo"}],
+        )
+        _create_po_file(
+            nl_dir / "djangojs.po",
+            [{"msgid": "Click here", "msgstr": "Klik hier"}],
+        )
+
+        settings.LOCALE_PATHS = [str(locale_dir)]
+        mocker.patch("django.apps.apps.get_app_configs", return_value=[])
+
+        stdout = StringIO()
+        call_command("check_translations", stdout=stdout)
+
+        output = stdout.getvalue()
+        assert output.count("OK") == 2
+        assert "All translations complete" in output
+
     def test_untranslated_strings(self, tmp_path, settings, mocker):
         """Test failure when there are untranslated strings."""
         locale_dir = tmp_path / "locale"
@@ -369,3 +417,36 @@ class TestGetAllPoFiles:
 
         files = get_all_po_files()
         assert files == sorted(files)
+
+    def test_finds_djangojs_po_files(self, tmp_path, settings, mocker):
+        """Test that get_all_po_files finds djangojs.po files."""
+        locale_dir = tmp_path / "locale"
+        nl_dir = locale_dir / "nl" / "LC_MESSAGES"
+        nl_dir.mkdir(parents=True)
+        django_po = nl_dir / "django.po"
+        django_po.touch()
+        djangojs_po = nl_dir / "djangojs.po"
+        djangojs_po.touch()
+
+        settings.LOCALE_PATHS = [str(locale_dir)]
+        mocker.patch("django.apps.apps.get_app_configs", return_value=[])
+
+        files = get_all_po_files()
+        assert len(files) == 2
+        assert django_po.resolve() in files
+        assert djangojs_po.resolve() in files
+
+    def test_finds_only_djangojs_po(self, tmp_path, settings, mocker):
+        """Test that get_all_po_files finds djangojs.po even without django.po."""
+        locale_dir = tmp_path / "locale"
+        nl_dir = locale_dir / "nl" / "LC_MESSAGES"
+        nl_dir.mkdir(parents=True)
+        djangojs_po = nl_dir / "djangojs.po"
+        djangojs_po.touch()
+
+        settings.LOCALE_PATHS = [str(locale_dir)]
+        mocker.patch("django.apps.apps.get_app_configs", return_value=[])
+
+        files = get_all_po_files()
+        assert len(files) == 1
+        assert djangojs_po.resolve() in files

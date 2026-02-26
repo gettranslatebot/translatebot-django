@@ -167,6 +167,43 @@ def test_finds_po_in_default_locale_directory(tmp_path, settings, mocker, monkey
     assert paths[0].name == "django.po"
 
 
+def test_get_all_po_paths_finds_djangojs_po(temp_locale_dir):
+    """Test that get_all_po_paths finds djangojs.po files."""
+    nl_dir = temp_locale_dir / "nl" / "LC_MESSAGES"
+    nl_dir.mkdir(parents=True)
+    django_po = nl_dir / "django.po"
+    django_po.write_text("")
+    djangojs_po = nl_dir / "djangojs.po"
+    djangojs_po.write_text("")
+
+    paths = get_all_po_paths("nl")
+    assert len(paths) == 2
+    assert django_po in paths
+    assert djangojs_po in paths
+
+
+def test_get_all_po_paths_finds_only_djangojs_po(temp_locale_dir):
+    """Test that get_all_po_paths finds djangojs.po even without django.po."""
+    nl_dir = temp_locale_dir / "nl" / "LC_MESSAGES"
+    nl_dir.mkdir(parents=True)
+    djangojs_po = nl_dir / "djangojs.po"
+    djangojs_po.write_text("")
+
+    paths = get_all_po_paths("nl")
+    assert len(paths) == 1
+    assert djangojs_po in paths
+
+
+def test_get_all_po_paths_error_lists_both_filenames(temp_locale_dir):
+    """Test that error message lists both django.po and djangojs.po paths."""
+    with pytest.raises(CommandError, match="No translation files found") as exc_info:
+        get_all_po_paths("xx")
+
+    error_msg = str(exc_info.value)
+    assert "django.po" in error_msg
+    assert "djangojs.po" in error_msg
+
+
 def test_translate_text_basic(mocker):
     """Test basic translation with JSON array input/output."""
     mock_response = mocker.MagicMock()
@@ -330,6 +367,74 @@ def test_command_translates_empty_entries(sample_po_file, mock_completion):
         1 for entry in po if entry.msgid and not entry.obsolete and entry.msgstr
     )
     assert translated_count > 0
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_command_translates_djangojs_po(tmp_path, settings, mocker, mock_completion):
+    """Test that translate command processes djangojs.po files."""
+    locale_dir = tmp_path / "locale"
+    nl_dir = locale_dir / "nl" / "LC_MESSAGES"
+    nl_dir.mkdir(parents=True)
+
+    # Create a djangojs.po file with untranslated entries
+    js_po = polib.POFile()
+    js_po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    js_po.append(polib.POEntry(msgid="Click here", msgstr=""))
+    js_po.save(str(nl_dir / "djangojs.po"))
+
+    settings.LOCALE_PATHS = [str(locale_dir)]
+    mocker.patch("django.apps.apps.get_app_configs", return_value=[])
+
+    mock_completion("Klik hier")
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    # Verify the djangojs.po was translated
+    po = polib.pofile(str(nl_dir / "djangojs.po"))
+    assert po[0].msgstr == "Klik hier"
+    assert "Successfully" in out.getvalue()
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_command_translates_both_django_and_djangojs(
+    tmp_path, settings, mocker, mock_completion
+):
+    """Test that translate command processes both django.po and djangojs.po."""
+    locale_dir = tmp_path / "locale"
+    nl_dir = locale_dir / "nl" / "LC_MESSAGES"
+    nl_dir.mkdir(parents=True)
+
+    # Create django.po
+    django_po = polib.POFile()
+    django_po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    django_po.append(polib.POEntry(msgid="Hello", msgstr=""))
+    django_po.save(str(nl_dir / "django.po"))
+
+    # Create djangojs.po
+    js_po = polib.POFile()
+    js_po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    js_po.append(polib.POEntry(msgid="Click here", msgstr=""))
+    js_po.save(str(nl_dir / "djangojs.po"))
+
+    settings.LOCALE_PATHS = [str(locale_dir)]
+    mocker.patch("django.apps.apps.get_app_configs", return_value=[])
+
+    mock_completion("Vertaald")
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    output = out.getvalue()
+    # Both files should be processed
+    assert "2 file(s)" in output
+
+    # Both should be translated
+    result_django = polib.pofile(str(nl_dir / "django.po"))
+    assert result_django[0].msgstr == "Vertaald"
+
+    result_js = polib.pofile(str(nl_dir / "djangojs.po"))
+    assert result_js[0].msgstr == "Vertaald"
 
 
 @pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
@@ -1760,6 +1865,20 @@ def test_get_app_translation_context_found(tmp_path):
 
     result = get_app_translation_context(po_path)
     assert result == "Medical terminology context."
+
+
+def test_get_app_translation_context_works_with_djangojs_po(tmp_path):
+    """Test get_app_translation_context works with djangojs.po paths."""
+    app_dir = tmp_path / "myapp"
+    locale_dir = app_dir / "locale" / "nl" / "LC_MESSAGES"
+    locale_dir.mkdir(parents=True)
+    po_path = locale_dir / "djangojs.po"
+
+    translating_md = app_dir / "TRANSLATING.md"
+    translating_md.write_text("JS translation context.")
+
+    result = get_app_translation_context(po_path)
+    assert result == "JS translation context."
 
 
 def test_get_app_translation_context_not_found(tmp_path):
