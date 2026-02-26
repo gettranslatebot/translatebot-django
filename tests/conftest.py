@@ -80,7 +80,12 @@ def mock_completion(mocker):
     def _create_mock(translation_text="Vertaalde tekst"):
         def side_effect(**kwargs):
             user_content = kwargs["messages"][1]["content"]
-            input_strings = json.loads(user_content[user_content.find("[") :])
+            raw = json.loads(user_content[user_content.find("[") :])
+            # Handle both plain strings and objects with 'text' key
+            if raw and isinstance(raw[0], dict):
+                input_strings = [item["text"] for item in raw]
+            else:
+                input_strings = raw
             if callable(translation_text):
                 translations = [translation_text(s) for s in input_strings]
             else:
