@@ -20,9 +20,9 @@ _DEEPL_REGIONAL_TARGETS = {
 #   {name}  {0}  {name!r}  {0:.2f}  {}
 _PLACEHOLDER_RE = re.compile(
     r"""
-    %\( [^)]+? \) [diouxXeEfFgGcrsab%]   # %(name)s style
-    | %[%diouxXeEfFgGcrsab]               # %s / %d / %% style
-    | \{ [^}]*? \}                         # {name} / {0} / {} style
+    %\( [^)]+? \) [diouxXeEfFgGcrsab%]       # %(name)s style
+    | %[%diouxXeEfFgGcrsab]                   # %s / %d / %% style
+    | (?<!\{) \{ \w* (?:[!:][^}]*)? \} (?!\}) # {name} / {0} / {} style
     """,
     re.VERBOSE,
 )

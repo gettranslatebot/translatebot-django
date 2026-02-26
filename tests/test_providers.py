@@ -349,9 +349,6 @@ def test_deepl_translate_generic_error():
         provider.translate(["Hello"], "de")
 
 
-# --- DeepL import guard test ---
-
-
 # --- DeepL placeholder protection tests ---
 
 
@@ -378,6 +375,11 @@ def test_deepl_translate_generic_error():
             "Available in %(country)s from %(start_date)s",
             "Available in <x>%(country)s</x> from <x>%(start_date)s</x>",
         ),
+        # Double braces (str.format literal braces) – NOT wrapped
+        ("{{escaped}}", "{{escaped}}"),
+        ("{{count}} items", "{{count}} items"),
+        # Arbitrary brace content – NOT wrapped
+        ("{ color: red }", "{ color: red }"),
         # No placeholders – unchanged
         ("Hello world", "Hello world"),
         ("", ""),
