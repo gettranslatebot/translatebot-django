@@ -617,7 +617,12 @@ def test_command_batches_large_input(temp_locale_dir, mocker):
         nonlocal call_count
         call_count += 1
         user_content = kwargs["messages"][1]["content"]
-        input_strings = json.loads(user_content[user_content.find("[") :])
+        raw = json.loads(user_content[user_content.find("[") :])
+        # Handle both plain strings and objects with 'text' key
+        if raw and isinstance(raw[0], dict):
+            input_strings = [item["text"] for item in raw]
+        else:
+            input_strings = raw
         translations = [f"Vertaald: {s}" for s in input_strings]
         translated_strings.extend(input_strings)
         mock_resp = mocker.MagicMock()
@@ -2357,10 +2362,165 @@ def test_gather_strings_deduplicates_shared_plural_msgids(tmp_path):
     po.append(entry2)
     po.save(str(po_path))
 
-    strings = gather_strings(po_path)
+    strings, comments = gather_strings(po_path)
     # "%(count)d items" should appear only once despite being in both entries
     assert strings == [
         "%(count)d item",
         "%(count)d items",
         "%(count)d more items",
     ]
+    assert comments == {}
+
+
+# --- Tests for PO file extracted comments ---
+
+
+def test_gather_strings_returns_extracted_comments(tmp_path):
+    """Test that gather_strings returns extracted comments from PO entries."""
+    from translatebot_django.management.commands.translate import gather_strings
+
+    po_path = tmp_path / "django.po"
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po.append(
+        polib.POEntry(
+            msgid="Save",
+            msgstr="",
+            comment="Button label for saving the document",
+        )
+    )
+    po.append(polib.POEntry(msgid="Hello", msgstr=""))
+    po.save(str(po_path))
+
+    strings, comments = gather_strings(po_path)
+    assert strings == ["Save", "Hello"]
+    assert comments == {"Save": "Button label for saving the document"}
+    assert "Hello" not in comments
+
+
+def test_gather_strings_plural_entry_comment_applies_to_both_forms(tmp_path):
+    """Test that a plural entry's comment applies to both msgid and msgid_plural."""
+    from translatebot_django.management.commands.translate import gather_strings
+
+    po_path = tmp_path / "django.po"
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po.append(
+        polib.POEntry(
+            msgid="%(count)d item",
+            msgid_plural="%(count)d items",
+            msgstr_plural={0: "", 1: ""},
+            comment="Shown in shopping cart badge",
+        )
+    )
+    po.save(str(po_path))
+
+    strings, comments = gather_strings(po_path)
+    assert "%(count)d item" in comments
+    assert "%(count)d items" in comments
+    assert comments["%(count)d item"] == "Shown in shopping cart badge"
+    assert comments["%(count)d items"] == "Shown in shopping cart badge"
+
+
+def test_gather_strings_ignores_empty_and_whitespace_comments(tmp_path):
+    """Test that entries with empty or whitespace-only comments are excluded."""
+    from translatebot_django.management.commands.translate import gather_strings
+
+    po_path = tmp_path / "django.po"
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po.append(polib.POEntry(msgid="Hello", msgstr="", comment=""))
+    po.append(polib.POEntry(msgid="World", msgstr="", comment="   "))
+    po.save(str(po_path))
+
+    strings, comments = gather_strings(po_path)
+    assert strings == ["Hello", "World"]
+    assert comments == {}
+
+
+def test_build_input_payload_with_comments():
+    """Test _build_input_payload returns objects when comments are present."""
+    from translatebot_django.management.commands.translate import _build_input_payload
+
+    texts = ["Save", "Hello"]
+    comments = {"Save": "Button label for saving"}
+    result = _build_input_payload(texts, comments)
+    assert result == [
+        {"text": "Save", "comment": "Button label for saving"},
+        {"text": "Hello"},
+    ]
+
+
+def test_build_input_payload_without_comments():
+    """Test _build_input_payload returns plain list when no comments."""
+    from translatebot_django.management.commands.translate import _build_input_payload
+
+    texts = ["Save", "Hello"]
+    assert _build_input_payload(texts) is texts
+    assert _build_input_payload(texts, None) is texts
+    assert _build_input_payload(texts, {}) is texts
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_command_passes_po_comments_to_translation(temp_locale_dir, mocker):
+    """Test that extracted comments from PO entries reach the LLM."""
+    import json
+
+    nl_dir = temp_locale_dir / "nl" / "LC_MESSAGES"
+    nl_dir.mkdir(parents=True, exist_ok=True)
+    po_path = nl_dir / "django.po"
+
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po.append(
+        polib.POEntry(
+            msgid="Save",
+            msgstr="",
+            comment="Button label for saving data",
+        )
+    )
+    po.save(str(po_path))
+
+    mock_response = mocker.MagicMock()
+    mock_response.choices[0].message.content = json.dumps(["Opslaan"])
+    mock = mocker.patch(
+        "translatebot_django.management.commands.translate.completion"
+    )
+    mock.return_value = mock_response
+
+    call_command("translate", target_lang="nl")
+
+    user_content = mock.call_args[1]["messages"][1]["content"]
+    assert "Button label for saving data" in user_content
+    assert '"text": "Save"' in user_content
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_command_no_comments_sends_plain_array(temp_locale_dir, mock_completion):
+    """Test that entries without comments use plain JSON array format."""
+    import json
+
+    nl_dir = temp_locale_dir / "nl" / "LC_MESSAGES"
+    nl_dir.mkdir(parents=True, exist_ok=True)
+    po_path = nl_dir / "django.po"
+
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po.append(polib.POEntry(msgid="Hello", msgstr=""))
+    po.save(str(po_path))
+
+    mock = mock_completion("Hallo")
+    call_command("translate", target_lang="nl")
+
+    user_content = mock.call_args[1]["messages"][1]["content"]
+    parsed = json.loads(user_content[user_content.find("[") :])
+    # Should be plain strings, not objects
+    assert parsed == ["Hello"]
+
+
+def test_base_system_prompt_mentions_comment_fields():
+    """Test that the system prompt instructs the LLM about comment fields."""
+    from translatebot_django.management.commands.translate import BASE_SYSTEM_PROMPT
+
+    assert "comment" in BASE_SYSTEM_PROMPT.lower()
+    assert "disambiguate" in BASE_SYSTEM_PROMPT.lower()

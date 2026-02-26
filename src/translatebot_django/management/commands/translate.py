@@ -98,10 +98,13 @@ def get_token_count(text):
 BASE_SYSTEM_PROMPT = (
     "You are a professional software localization translator.\n"
     "Important rules:\n"
-    "- The input is a JSON array of strings. The output MUST be a JSON array.\n"
+    "- The input is a JSON array of strings (or objects with 'text' and optional "
+    "'comment' fields). The output MUST be a JSON array of translated strings.\n"
     "- CRITICAL: The output array MUST have EXACTLY the same number of elements "
     "as the input array. Each input string at index N must have its translation "
     "at index N in the output. Never skip, merge, or omit any strings.\n"
+    "- When an input element has a 'comment' field, use it as context to "
+    "disambiguate the meaning, but do NOT include the comment in the output.\n"
     "- Preserve all placeholders like %(name)s, {name}, {0}, %s exactly as-is.\n"
     "- Preserve HTML tags exactly as they are.\n"
     "- Preserve line breaks (\\n) in the text.\n"
@@ -144,7 +147,26 @@ def create_preamble(target_lang, count):
     )
 
 
-def translate_text(text, target_lang, model, api_key, context=None):
+def _build_input_payload(texts, comments=None):
+    """Build the JSON-serialisable input payload for the LLM.
+
+    When *comments* contains entries for any of the *texts*, the payload uses
+    an object format (``{"text": …, "comment": …}``).  Otherwise a plain
+    list of strings is returned for backward-compatibility and token
+    efficiency.
+    """
+    if comments:
+        payload = []
+        for s in texts:
+            if s in comments:
+                payload.append({"text": s, "comment": comments[s]})
+            else:
+                payload.append({"text": s})
+        return payload
+    return texts
+
+
+def translate_text(text, target_lang, model, api_key, context=None, comments=None):
     """Translate text by calling LiteLLM with retry logic for rate limits.
 
     Args:
@@ -153,10 +175,13 @@ def translate_text(text, target_lang, model, api_key, context=None):
         model: LLM model to use
         api_key: API key for the LLM provider
         context: Optional translation context from TRANSLATING.md
+        comments: Optional dict mapping source strings to developer comments
+                  extracted from PO files (#. lines).
     """
     _require_litellm()
     preamble = create_preamble(target_lang, len(text))
     system_prompt = build_system_prompt(context)
+    input_payload = _build_input_payload(text, comments)
 
     attempt = 0
     while True:
@@ -170,7 +195,8 @@ def translate_text(text, target_lang, model, api_key, context=None):
                     },
                     {
                         "role": "user",
-                        "content": preamble + json.dumps(text, ensure_ascii=False),
+                        "content": preamble
+                        + json.dumps(input_payload, ensure_ascii=False),
                     },
                 ],
                 temperature=0.2,  # Low randomness for consistency
@@ -221,13 +247,14 @@ def translate_text(text, target_lang, model, api_key, context=None):
     return translated
 
 
-def batch_by_tokens(texts, target_lang, model):
+def batch_by_tokens(texts, target_lang, model, comments=None):
     """Split texts into token-sized groups for LLM translation.
 
     Args:
         texts: List of strings to split into batches.
         target_lang: Target language code.
         model: LLM model name (used for token limit lookup).
+        comments: Optional dict mapping source strings to developer comments.
 
     Returns:
         List of lists of strings.
@@ -238,8 +265,14 @@ def batch_by_tokens(texts, target_lang, model):
     for item in texts:
         group_candidate += [item]
 
-        total = get_token_count(json.dumps(group_candidate, ensure_ascii=False))
-        output_tokens_estimate = total * 1.3
+        # Use the actual payload (with comments) for input token counting
+        input_payload = _build_input_payload(group_candidate, comments)
+        total = get_token_count(json.dumps(input_payload, ensure_ascii=False))
+        # Output estimate based on text-only tokens (comments don't appear in output)
+        text_only_tokens = get_token_count(
+            json.dumps(group_candidate, ensure_ascii=False)
+        )
+        output_tokens_estimate = text_only_tokens * 1.3
         preamble = create_preamble(target_lang, len(group_candidate))
         preamble_length = get_token_count(preamble)
 
@@ -253,13 +286,28 @@ def batch_by_tokens(texts, target_lang, model):
 
 
 def gather_strings(po_path, only_empty=True):
+    """Gather translatable strings and developer comments from a PO file.
+
+    Returns:
+        A tuple of (strings, comments) where *strings* is a list of msgid
+        values to translate and *comments* is a dict mapping msgid strings
+        to their extracted developer comments (the ``#.`` lines in PO files).
+    """
     po = polib.pofile(str(po_path), wrapwidth=79)
     ret = []
     seen = set()
+    comments = {}
 
     for entry in po:
         if not entry.msgid or entry.obsolete:
             continue
+
+        # Capture extracted comment if present
+        if entry.comment and entry.comment.strip():
+            stripped = entry.comment.strip()
+            comments[entry.msgid] = stripped
+            if entry.msgid_plural:
+                comments[entry.msgid_plural] = stripped
 
         if entry.msgid_plural:
             # Plural entry: check msgstr_plural values instead of msgstr
@@ -276,7 +324,7 @@ def gather_strings(po_path, only_empty=True):
                 continue
             ret.append(entry.msgid)
 
-    return ret
+    return ret, comments
 
 
 class Command(BaseCommand):
@@ -477,15 +525,18 @@ class Command(BaseCommand):
 
         for effective_context, group_po_paths in context_groups.items():
             all_msgids = []
+            all_comments = {}
             for po_path in group_po_paths:
-                all_msgids.extend(gather_strings(po_path, only_empty=overwrite))
+                strings, comments = gather_strings(po_path, only_empty=overwrite)
+                all_msgids.extend(strings)
+                all_comments.update(comments)
 
             total_msgids += len(all_msgids)
 
             if not all_msgids:
                 continue
 
-            groups = provider.batch(all_msgids, target_lang)
+            groups = provider.batch(all_msgids, target_lang, comments=all_comments)
 
             if dry_run:
                 for group in groups:
@@ -494,10 +545,15 @@ class Command(BaseCommand):
             else:
                 with handle_api_errors():
                     for group in groups:
+                        batch_comments = (
+                            {t: all_comments[t] for t in group if t in all_comments}
+                            or None
+                        )
                         translated = provider.translate(
                             texts=group,
                             target_lang=target_lang,
                             context=effective_context,
+                            comments=batch_comments,
                         )
                         for msgid, translation in zip(group, translated, strict=True):
                             msgid_to_translation[msgid] = translation

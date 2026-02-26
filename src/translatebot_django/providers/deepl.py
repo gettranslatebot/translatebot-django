@@ -53,7 +53,7 @@ class DeepLProvider(TranslationProvider):
         self._deepl = _get_deepl_module()
         self._translator = self._deepl.Translator(api_key)
 
-    def translate(self, texts, target_lang, context=None):
+    def translate(self, texts, target_lang, context=None, comments=None):
         deepl_lang = django_to_deepl_target(target_lang)
 
         try:
@@ -88,7 +88,7 @@ class DeepLProvider(TranslationProvider):
 
         return translations
 
-    def batch(self, texts, target_lang):
+    def batch(self, texts, target_lang, comments=None):
         """Split texts into batches respecting DeepL API limits.
 
         DeepL limits: max 50 texts per request, max 128KB total request size.
