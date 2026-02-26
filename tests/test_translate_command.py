@@ -2298,7 +2298,7 @@ def test_deepl_provider_works_without_litellm(
     assert "Successfully translated" in output
 
 
-# --- Test for litellm ImportError fallback (lines 22-36) ---
+# --- Test for litellm ImportError fallback (except ImportError sentinel classes) ---
 
 
 def test_litellm_import_error_creates_sentinel_classes():
@@ -2331,7 +2331,7 @@ def test_litellm_import_error_creates_sentinel_classes():
         importlib.reload(translate_mod)
 
 
-# --- Test for plural deduplication branch (line 270→269) ---
+# --- Test for `seen` deduplication in gather_strings ---
 
 
 def test_gather_strings_deduplicates_shared_plural_msgids(tmp_path):
