@@ -2483,9 +2483,7 @@ def test_command_passes_po_comments_to_translation(temp_locale_dir, mocker):
 
     mock_response = mocker.MagicMock()
     mock_response.choices[0].message.content = json.dumps(["Opslaan"])
-    mock = mocker.patch(
-        "translatebot_django.management.commands.translate.completion"
-    )
+    mock = mocker.patch("translatebot_django.management.commands.translate.completion")
     mock.return_value = mock_response
 
     call_command("translate", target_lang="nl")
@@ -2560,7 +2558,9 @@ def test_gather_strings_skips_comments_for_already_translated_entries(tmp_path):
 
 
 @pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
-def test_comment_conflict_across_po_files_last_wins(tmp_path, settings, mock_completion):
+def test_comment_conflict_across_po_files_last_wins(
+    tmp_path, settings, mock_completion
+):
     """Test that when the same msgid has different comments in two PO files,
     the last one processed wins."""
     from translatebot_django.management.commands.translate import gather_strings

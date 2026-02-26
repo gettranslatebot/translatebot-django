@@ -545,10 +545,9 @@ class Command(BaseCommand):
             else:
                 with handle_api_errors():
                     for group in groups:
-                        batch_comments = (
-                            {t: all_comments[t] for t in group if t in all_comments}
-                            or None
-                        )
+                        batch_comments = {
+                            t: all_comments[t] for t in group if t in all_comments
+                        } or None
                         translated = provider.translate(
                             texts=group,
                             target_lang=target_lang,
