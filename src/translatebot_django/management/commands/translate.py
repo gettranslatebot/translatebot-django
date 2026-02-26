@@ -302,13 +302,6 @@ def gather_strings(po_path, only_empty=True):
         if not entry.msgid or entry.obsolete:
             continue
 
-        # Capture extracted comment if present
-        if entry.comment and entry.comment.strip():
-            stripped = entry.comment.strip()
-            comments[entry.msgid] = stripped
-            if entry.msgid_plural:
-                comments[entry.msgid_plural] = stripped
-
         if entry.msgid_plural:
             # Plural entry: check msgstr_plural values instead of msgstr
             has_translation = entry.msgstr_plural and all(entry.msgstr_plural.values())
@@ -323,6 +316,13 @@ def gather_strings(po_path, only_empty=True):
             if entry.msgstr and not only_empty and not entry.fuzzy:
                 continue
             ret.append(entry.msgid)
+
+        # Capture extracted comment only for entries that will be translated
+        if entry.comment and entry.comment.strip():
+            stripped = entry.comment.strip()
+            comments[entry.msgid] = stripped
+            if entry.msgid_plural:
+                comments[entry.msgid_plural] = stripped
 
     return ret, comments
 

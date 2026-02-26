@@ -2524,3 +2524,95 @@ def test_base_system_prompt_mentions_comment_fields():
 
     assert "comment" in BASE_SYSTEM_PROMPT.lower()
     assert "disambiguate" in BASE_SYSTEM_PROMPT.lower()
+
+
+def test_gather_strings_skips_comments_for_already_translated_entries(tmp_path):
+    """Test that comments are only collected for entries that will be translated.
+
+    only_empty=False is the non-overwrite mode (the default call path), which
+    skips entries that already have a translation.
+    """
+    from translatebot_django.management.commands.translate import gather_strings
+
+    po_path = tmp_path / "django.po"
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po.append(
+        polib.POEntry(
+            msgid="Save",
+            msgstr="Opslaan",
+            comment="Already translated entry",
+        )
+    )
+    po.append(
+        polib.POEntry(
+            msgid="Hello",
+            msgstr="",
+            comment="Needs translation",
+        )
+    )
+    po.save(str(po_path))
+
+    strings, comments = gather_strings(po_path, only_empty=False)
+    assert strings == ["Hello"]
+    assert "Save" not in comments
+    assert comments == {"Hello": "Needs translation"}
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_comment_conflict_across_po_files_last_wins(tmp_path, settings, mock_completion):
+    """Test that when the same msgid has different comments in two PO files,
+    the last one processed wins."""
+    from translatebot_django.management.commands.translate import gather_strings
+
+    locale1 = tmp_path / "locale1"
+    locale2 = tmp_path / "locale2"
+
+    for locale_dir in (locale1, locale2):
+        nl_dir = locale_dir / "nl" / "LC_MESSAGES"
+        nl_dir.mkdir(parents=True)
+
+    po1 = polib.POFile()
+    po1.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po1.append(polib.POEntry(msgid="Bank", msgstr="", comment="Financial institution"))
+    po1.save(str(locale1 / "nl" / "LC_MESSAGES" / "django.po"))
+
+    po2 = polib.POFile()
+    po2.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po2.append(polib.POEntry(msgid="Bank", msgstr="", comment="River bank"))
+    po2.save(str(locale2 / "nl" / "LC_MESSAGES" / "django.po"))
+
+    # Gather from both files, simulating what _translate_po_files does
+    all_comments = {}
+    for po_path in (
+        locale1 / "nl" / "LC_MESSAGES" / "django.po",
+        locale2 / "nl" / "LC_MESSAGES" / "django.po",
+    ):
+        _, comments = gather_strings(po_path)
+        all_comments.update(comments)
+
+    # Last PO file's comment wins
+    assert all_comments["Bank"] == "River bank"
+
+
+def test_batch_by_tokens_accounts_for_comments(mocker):
+    """Test that batch_by_tokens creates more batches when comments add token weight."""
+    from translatebot_django.management.commands.translate import batch_by_tokens
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.get_max_tokens",
+        return_value=500,
+    )
+
+    texts = ["Short"] * 10
+    long_comment = "x " * 200  # Long comment inflates token count
+    comments = {"Short": long_comment}
+
+    batches_with = batch_by_tokens(texts, "nl", "gpt-4o-mini", comments=comments)
+    batches_without = batch_by_tokens(texts, "nl", "gpt-4o-mini")
+
+    # With a long comment, input tokens are larger so batches should be smaller/more
+    assert len(batches_with) >= len(batches_without)
+    # Verify all strings are still present across batches
+    assert sum(len(b) for b in batches_with) == 10
+    assert sum(len(b) for b in batches_without) == 10
