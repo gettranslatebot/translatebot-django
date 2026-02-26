@@ -228,7 +228,11 @@ def test_deepl_translate_basic(mocker):
     assert result == ["Hallo", "Welt"]
 
     provider._translator.translate_text.assert_called_once_with(
-        ["Hello", "World"], target_lang="DE"
+        ["Hello", "World"],
+        target_lang="DE",
+        tag_handling="xml",
+        ignore_tags=["x"],
+        preserve_formatting=True,
     )
 
 
@@ -274,7 +278,11 @@ def test_deepl_translate_uses_mapped_lang(mocker):
     provider.translate(["Hi"], "en")
 
     provider._translator.translate_text.assert_called_once_with(
-        ["Hi"], target_lang="EN-US"
+        ["Hi"],
+        target_lang="EN-US",
+        tag_handling="xml",
+        ignore_tags=["x"],
+        preserve_formatting=True,
     )
 
 
@@ -339,6 +347,100 @@ def test_deepl_translate_generic_error():
 
     with pytest.raises(CommandError, match="DeepL API error"):
         provider.translate(["Hello"], "de")
+
+
+# --- DeepL import guard test ---
+
+
+# --- DeepL placeholder protection tests ---
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # %(name)s style
+        ("%(country)s", "<x>%(country)s</x>"),
+        ("%(count)d items", "<x>%(count)d</x> items"),
+        # %s / %d style
+        ("%s items", "<x>%s</x> items"),
+        ("%d remaining", "<x>%d</x> remaining"),
+        # %% literal percent
+        ("100%%", "100<x>%%</x>"),
+        # {name} / {0} / {} style
+        ("{country}", "<x>{country}</x>"),
+        ("{0} items", "<x>{0}</x> items"),
+        ("{} left", "<x>{}</x> left"),
+        # Format specs
+        ("{0:.2f}", "<x>{0:.2f}</x>"),
+        ("{name!r}", "<x>{name!r}</x>"),
+        # Multiple placeholders
+        (
+            "Available in %(country)s from %(start_date)s",
+            "Available in <x>%(country)s</x> from <x>%(start_date)s</x>",
+        ),
+        # No placeholders – unchanged
+        ("Hello world", "Hello world"),
+        ("", ""),
+    ],
+)
+def test_wrap_placeholders(text, expected):
+    """_wrap_placeholders wraps format strings in <x> tags."""
+    from translatebot_django.providers.deepl import _wrap_placeholders
+
+    assert _wrap_placeholders(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("<x>%(country)s</x>", "%(country)s"),
+        ("Dostupno u <x>%(country)s</x>", "Dostupno u %(country)s"),
+        ("no tags here", "no tags here"),
+        ("", ""),
+    ],
+)
+def test_unwrap_placeholders(text, expected):
+    """_unwrap_placeholders strips <x></x> tags."""
+    from translatebot_django.providers.deepl import _unwrap_placeholders
+
+    assert _unwrap_placeholders(text) == expected
+
+
+def test_deepl_translate_protects_placeholders():
+    """Placeholders are wrapped before sending and unwrapped after."""
+    from translatebot_django.providers.deepl import DeepLProvider
+
+    provider = DeepLProvider(api_key="test-key")
+
+    mock_result = MagicMock()
+    mock_result.text = "Dostupno u <x>%(country)s</x> od <x>%(start_date)s</x>"
+
+    provider._translator.translate_text = MagicMock(return_value=[mock_result])
+
+    result = provider.translate(["Available in %(country)s from %(start_date)s"], "hr")
+    assert result == ["Dostupno u %(country)s od %(start_date)s"]
+
+    # Verify wrapped text was sent to the API
+    sent_texts = provider._translator.translate_text.call_args[0][0]
+    assert sent_texts == ["Available in <x>%(country)s</x> from <x>%(start_date)s</x>"]
+
+
+def test_deepl_translate_no_placeholders_unchanged():
+    """Texts without placeholders pass through normally."""
+    from translatebot_django.providers.deepl import DeepLProvider
+
+    provider = DeepLProvider(api_key="test-key")
+
+    mock_result = MagicMock()
+    mock_result.text = "Hallo Welt"
+
+    provider._translator.translate_text = MagicMock(return_value=[mock_result])
+
+    result = provider.translate(["Hello World"], "de")
+    assert result == ["Hallo Welt"]
+
+    sent_texts = provider._translator.translate_text.call_args[0][0]
+    assert sent_texts == ["Hello World"]
 
 
 # --- DeepL import guard test ---

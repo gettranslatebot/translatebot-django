@@ -1,3 +1,5 @@
+import re
+
 from django.core.management.base import CommandError
 
 from translatebot_django.providers import TranslationProvider
@@ -12,6 +14,28 @@ _DEEPL_REGIONAL_TARGETS = {
     "en": "EN-US",
     "pt": "PT-BR",
 }
+
+# Matches Python/Django format placeholders:
+#   %(name)s  %(count)d  %s  %d  %i  %f  %%
+#   {name}  {0}  {name!r}  {0:.2f}  {}
+_PLACEHOLDER_RE = re.compile(
+    r"""
+    %\( [^)]+? \) [diouxXeEfFgGcrsab%]   # %(name)s style
+    | %[%diouxXeEfFgGcrsab]               # %s / %d / %% style
+    | \{ [^}]*? \}                         # {name} / {0} / {} style
+    """,
+    re.VERBOSE,
+)
+
+
+def _wrap_placeholders(text):
+    """Wrap format placeholders in XML ignore tags for DeepL."""
+    return _PLACEHOLDER_RE.sub(lambda m: f"<x>{m.group()}</x>", text)
+
+
+def _unwrap_placeholders(text):
+    """Remove XML ignore tags that were wrapped around placeholders."""
+    return text.replace("<x>", "").replace("</x>", "")
 
 
 def django_to_deepl_target(lang_code):
@@ -56,8 +80,16 @@ class DeepLProvider(TranslationProvider):
     def translate(self, texts, target_lang, context=None, comments=None):
         deepl_lang = django_to_deepl_target(target_lang)
 
+        wrapped = [_wrap_placeholders(t) for t in texts]
+
         try:
-            results = self._translator.translate_text(texts, target_lang=deepl_lang)
+            results = self._translator.translate_text(
+                wrapped,
+                target_lang=deepl_lang,
+                tag_handling="xml",
+                ignore_tags=["x"],
+                preserve_formatting=True,
+            )
         except self._deepl.AuthorizationException as e:
             raise CommandError(
                 f"DeepL authentication failed: {e}\n"
@@ -78,7 +110,7 @@ class DeepLProvider(TranslationProvider):
         except self._deepl.DeepLException as e:
             raise CommandError(f"DeepL API error: {e}") from e
 
-        translations = [r.text for r in results]
+        translations = [_unwrap_placeholders(r.text) for r in results]
 
         # DeepL sometimes adds a trailing dot to translations even when the
         # source string does not end with one.  Strip it in that case.
