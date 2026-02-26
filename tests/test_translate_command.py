@@ -1867,6 +1867,20 @@ def test_get_app_translation_context_found(tmp_path):
     assert result == "Medical terminology context."
 
 
+def test_get_app_translation_context_works_with_djangojs_po(tmp_path):
+    """Test get_app_translation_context works with djangojs.po paths."""
+    app_dir = tmp_path / "myapp"
+    locale_dir = app_dir / "locale" / "nl" / "LC_MESSAGES"
+    locale_dir.mkdir(parents=True)
+    po_path = locale_dir / "djangojs.po"
+
+    translating_md = app_dir / "TRANSLATING.md"
+    translating_md.write_text("JS translation context.")
+
+    result = get_app_translation_context(po_path)
+    assert result == "JS translation context."
+
+
 def test_get_app_translation_context_not_found(tmp_path):
     """Test that get_app_translation_context returns None when no TRANSLATING.md."""
     app_dir = tmp_path / "myapp"
