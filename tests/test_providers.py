@@ -230,8 +230,7 @@ def test_deepl_translate_basic(mocker):
     provider._translator.translate_text.assert_called_once_with(
         ["Hello", "World"],
         target_lang="DE",
-        tag_handling="xml",
-        ignore_tags=["x"],
+        tag_handling="html",
         preserve_formatting=True,
     )
 
@@ -280,8 +279,7 @@ def test_deepl_translate_uses_mapped_lang(mocker):
     provider._translator.translate_text.assert_called_once_with(
         ["Hi"],
         target_lang="EN-US",
-        tag_handling="xml",
-        ignore_tags=["x"],
+        tag_handling="html",
         preserve_formatting=True,
     )
 
@@ -351,29 +349,37 @@ def test_deepl_translate_generic_error():
 
 # --- DeepL placeholder protection tests ---
 
+_NO = '<span translate="no">'
+_END = "</span>"
+
+
+def _w(ph):
+    """Wrap a placeholder in a non-translatable span (test helper)."""
+    return f"{_NO}{ph}{_END}"
+
 
 @pytest.mark.parametrize(
     "text, expected",
     [
         # %(name)s style
-        ("%(country)s", "<x>%(country)s</x>"),
-        ("%(count)d items", "<x>%(count)d</x> items"),
+        ("%(country)s", _w("%(country)s")),
+        ("%(count)d items", f"{_w('%(count)d')} items"),
         # %s / %d style
-        ("%s items", "<x>%s</x> items"),
-        ("%d remaining", "<x>%d</x> remaining"),
+        ("%s items", f"{_w('%s')} items"),
+        ("%d remaining", f"{_w('%d')} remaining"),
         # %% literal percent
-        ("100%%", "100<x>%%</x>"),
+        ("100%%", f"100{_w('%%')}"),
         # {name} / {0} / {} style
-        ("{country}", "<x>{country}</x>"),
-        ("{0} items", "<x>{0}</x> items"),
-        ("{} left", "<x>{}</x> left"),
+        ("{country}", _w("{country}")),
+        ("{0} items", f"{_w('{0}')} items"),
+        ("{} left", f"{_w('{}')} left"),
         # Format specs
-        ("{0:.2f}", "<x>{0:.2f}</x>"),
-        ("{name!r}", "<x>{name!r}</x>"),
+        ("{0:.2f}", _w("{0:.2f}")),
+        ("{name!r}", _w("{name!r}")),
         # Multiple placeholders
         (
             "Available in %(country)s from %(start_date)s",
-            "Available in <x>%(country)s</x> from <x>%(start_date)s</x>",
+            f"Available in {_w('%(country)s')} from {_w('%(start_date)s')}",
         ),
         # Double braces (str.format literal braces) – NOT wrapped
         ("{{escaped}}", "{{escaped}}"),
@@ -386,7 +392,7 @@ def test_deepl_translate_generic_error():
     ],
 )
 def test_wrap_placeholders(text, expected):
-    """_wrap_placeholders wraps format strings in <x> tags."""
+    """_wrap_placeholders wraps format strings in non-translatable spans."""
     from translatebot_django.providers.deepl import _wrap_placeholders
 
     assert _wrap_placeholders(text) == expected
@@ -395,14 +401,14 @@ def test_wrap_placeholders(text, expected):
 @pytest.mark.parametrize(
     "text, expected",
     [
-        ("<x>%(country)s</x>", "%(country)s"),
-        ("Dostupno u <x>%(country)s</x>", "Dostupno u %(country)s"),
+        (_w("%(country)s"), "%(country)s"),
+        (f"Dostupno u {_w('%(country)s')}", "Dostupno u %(country)s"),
         ("no tags here", "no tags here"),
         ("", ""),
     ],
 )
 def test_unwrap_placeholders(text, expected):
-    """_unwrap_placeholders strips <x></x> tags."""
+    """_unwrap_placeholders strips non-translatable span wrappers."""
     from translatebot_django.providers.deepl import _unwrap_placeholders
 
     assert _unwrap_placeholders(text) == expected
@@ -415,7 +421,7 @@ def test_deepl_translate_protects_placeholders():
     provider = DeepLProvider(api_key="test-key")
 
     mock_result = MagicMock()
-    mock_result.text = "Dostupno u <x>%(country)s</x> od <x>%(start_date)s</x>"
+    mock_result.text = f"Dostupno u {_w('%(country)s')} od {_w('%(start_date)s')}"
 
     provider._translator.translate_text = MagicMock(return_value=[mock_result])
 
@@ -424,7 +430,37 @@ def test_deepl_translate_protects_placeholders():
 
     # Verify wrapped text was sent to the API
     sent_texts = provider._translator.translate_text.call_args[0][0]
-    assert sent_texts == ["Available in <x>%(country)s</x> from <x>%(start_date)s</x>"]
+    assert sent_texts == [
+        f"Available in {_w('%(country)s')} from {_w('%(start_date)s')}"
+    ]
+
+
+def test_deepl_translate_preserves_html_with_placeholders():
+    """HTML tags in source text are preserved through translation (regression test)."""
+    from translatebot_django.providers.deepl import DeepLProvider
+
+    provider = DeepLProvider(api_key="test-key")
+
+    source = 'Click <a href="/shop">%(name)s</a> or <br> visit <b>us</b>'
+
+    mock_result = MagicMock()
+    # DeepL in HTML mode preserves all HTML tags and translates only text
+    mock_result.text = (
+        f'Klicken Sie auf <a href="/shop">{_w("%(name)s")}</a>'
+        " oder <br> besuchen Sie <b>uns</b>"
+    )
+
+    provider._translator.translate_text = MagicMock(return_value=[mock_result])
+
+    result = provider.translate([source], "de")
+    assert result == [
+        'Klicken Sie auf <a href="/shop">%(name)s</a> oder <br> besuchen Sie <b>uns</b>'
+    ]
+
+    # Verify HTML mode was used
+    call_kwargs = provider._translator.translate_text.call_args[1]
+    assert call_kwargs["tag_handling"] == "html"
+    assert "ignore_tags" not in call_kwargs
 
 
 def test_deepl_translate_no_placeholders_unchanged():
