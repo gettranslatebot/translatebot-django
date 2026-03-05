@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-03-05
+
+### Fixed
+
+- Fixed HTML being stripped from model field translations when using DeepL. Switched from XML to HTML tag handling mode, which properly preserves HTML tags, self-closing elements, and entities during translation.
+- Fixed translated model fields not being saved when a translation batch failed partway through. Translations are now saved after each batch to prevent data loss.
+
 ## [0.9.0] - 2026-02-26
 
 ### Added
