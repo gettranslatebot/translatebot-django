@@ -483,6 +483,34 @@ class Command(BaseCommand):
             )
             self.stdout.write("=" * 60)
 
+    @staticmethod
+    def _save_po_translations(po_paths, msgid_to_translation):
+        """Write current translations to PO files on disk.
+
+        Called after each successful batch so that translations are persisted
+        incrementally and not lost if a later batch fails.
+        """
+        for po_path in po_paths:
+            po = polib.pofile(str(po_path), wrapwidth=79)
+            changed = False
+
+            for entry in po:
+                if entry.msgid not in msgid_to_translation:
+                    continue
+                if entry.msgid_plural:
+                    singular = msgid_to_translation[entry.msgid]
+                    plural = msgid_to_translation.get(entry.msgid_plural, singular)
+                    for i in entry.msgstr_plural:
+                        entry.msgstr_plural[i] = singular if i == 0 else plural
+                else:
+                    entry.msgstr = msgid_to_translation[entry.msgid]
+                if entry.fuzzy:
+                    entry.flags.remove("fuzzy")
+                changed = True
+
+            if changed:
+                po.save(str(po_path))
+
     def _translate_po_files(
         self,
         target_lang,
@@ -544,7 +572,7 @@ class Command(BaseCommand):
                         msgid_to_translation[msgid] = ""
             else:
                 with handle_api_errors():
-                    for group in groups:
+                    for batch_num, group in enumerate(groups, 1):
                         batch_comments = {
                             t: all_comments[t] for t in group if t in all_comments
                         } or None
@@ -556,6 +584,11 @@ class Command(BaseCommand):
                         )
                         for msgid, translation in zip(group, translated, strict=True):
                             msgid_to_translation[msgid] = translation
+
+                        # Save PO files after each batch so translations
+                        # aren't lost if a later batch fails
+                        self._save_po_translations(group_po_paths, msgid_to_translation)
+                        self.stdout.write(f"  💾 Saved batch {batch_num}/{len(groups)}")
 
         # Early return with minimal output if nothing to translate
         if total_msgids == 0:
@@ -580,8 +613,7 @@ class Command(BaseCommand):
         else:
             self.stdout.write(f"🔄 Translating with {provider.name}...")
 
-        # Now we have all the msgid -> translation mappings, we can proceed
-        # with putting them into the .po files
+        # Report what was translated and save PO files for dry-run
         total_changed = 0
         for po_path in po_paths:
             self.stdout.write(self.style.NOTICE(f"\nProcessing: {po_path}"))
@@ -594,30 +626,17 @@ class Command(BaseCommand):
                         self.stdout.write(f"✓ Would translate '{entry.msgid[:50]}'")
                     else:
                         self.stdout.write(f"✓ Translated '{entry.msgid[:50]}'")
-                        if entry.msgid_plural:
-                            singular = msgid_to_translation[entry.msgid]
-                            plural = msgid_to_translation.get(
-                                entry.msgid_plural, singular
-                            )
-                            for i in entry.msgstr_plural:
-                                entry.msgstr_plural[i] = singular if i == 0 else plural
-                        else:
-                            entry.msgstr = msgid_to_translation[entry.msgid]
-                        # Clear fuzzy flag since we have a fresh translation
-                        if entry.fuzzy:
-                            entry.flags.remove("fuzzy")
                     changed += 1
 
-            if not dry_run and changed > 0:
-                po.save(str(po_path))
-                self.stdout.write(
-                    self.style.SUCCESS(f"✨ Successfully updated {po_path}")
-                )
-            elif dry_run:
+            if dry_run:
                 self.stdout.write(
                     self.style.NOTICE(
                         f"Dry run: {changed} entries would be updated in {po_path}"
                     )
+                )
+            elif changed > 0:
+                self.stdout.write(
+                    self.style.SUCCESS(f"✨ Successfully updated {po_path}")
                 )
 
             total_changed += changed
@@ -702,16 +721,7 @@ class Command(BaseCommand):
         # Translate all groups
         if dry_run:
             self.stdout.write("🔍 Dry run mode: skipping translation")
-            translation_items = []
-            for _texts_group, items_group in groups:
-                for item in items_group:
-                    translation_items.append(
-                        {
-                            "instance": item["instance"],
-                            "target_field": item["target_field"],
-                            "translation": "",
-                        }
-                    )
+            updated = sum(len(items_group) for _, items_group in groups)
         else:
             batch_count = len(groups)
             self.stdout.write(
@@ -719,16 +729,17 @@ class Command(BaseCommand):
                 f"({batch_count} batches)..."
             )
 
-            translation_items = []
+            updated = 0
             with handle_api_errors():
-                for texts_group, items_group in groups:
+                for batch_num, (texts_group, items_group) in enumerate(groups, 1):
                     translations = provider.translate(
                         texts_group, target_lang, context=context
                     )
 
+                    batch_items = []
                     pairs = zip(items_group, translations, strict=True)
                     for item, translation in pairs:
-                        translation_items.append(
+                        batch_items.append(
                             {
                                 "instance": item["instance"],
                                 "target_field": item["target_field"],
@@ -746,8 +757,10 @@ class Command(BaseCommand):
                             f"'{source_preview}' → '{translation_preview}'"
                         )
 
-        # Apply translations
-        updated = backend.apply_translations(translation_items, dry_run=dry_run)
+                    # Save after each batch so translations aren't lost if
+                    # a later batch fails
+                    updated += backend.apply_translations(batch_items, dry_run=dry_run)
+                    self.stdout.write(f"  💾 Saved batch {batch_num}/{batch_count}")
 
         self.stdout.write("\n" + "=" * 60)
         if dry_run:
