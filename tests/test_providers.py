@@ -421,9 +421,7 @@ def test_deepl_translate_protects_placeholders():
     provider = DeepLProvider(api_key="test-key")
 
     mock_result = MagicMock()
-    mock_result.text = (
-        f"Dostupno u {_w('%(country)s')} od {_w('%(start_date)s')}"
-    )
+    mock_result.text = f"Dostupno u {_w('%(country)s')} od {_w('%(start_date)s')}"
 
     provider._translator.translate_text = MagicMock(return_value=[mock_result])
 
@@ -435,6 +433,34 @@ def test_deepl_translate_protects_placeholders():
     assert sent_texts == [
         f"Available in {_w('%(country)s')} from {_w('%(start_date)s')}"
     ]
+
+
+def test_deepl_translate_preserves_html_with_placeholders():
+    """HTML tags in source text are preserved through translation (regression test)."""
+    from translatebot_django.providers.deepl import DeepLProvider
+
+    provider = DeepLProvider(api_key="test-key")
+
+    source = 'Click <a href="/shop">%(name)s</a> or <br> visit <b>us</b>'
+
+    mock_result = MagicMock()
+    # DeepL in HTML mode preserves all HTML tags and translates only text
+    mock_result.text = (
+        f'Klicken Sie auf <a href="/shop">{_w("%(name)s")}</a>'
+        " oder <br> besuchen Sie <b>uns</b>"
+    )
+
+    provider._translator.translate_text = MagicMock(return_value=[mock_result])
+
+    result = provider.translate([source], "de")
+    assert result == [
+        'Klicken Sie auf <a href="/shop">%(name)s</a> oder <br> besuchen Sie <b>uns</b>'
+    ]
+
+    # Verify HTML mode was used
+    call_kwargs = provider._translator.translate_text.call_args[1]
+    assert call_kwargs["tag_handling"] == "html"
+    assert "ignore_tags" not in call_kwargs
 
 
 def test_deepl_translate_no_placeholders_unchanged():
