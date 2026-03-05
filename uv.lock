@@ -2081,7 +2081,7 @@ wheels = [
 
 [[package]]
 name = "translatebot-django"
-version = "0.9.0"
+version = "0.9.1"
 source = { editable = "." }
 dependencies = [
     { name = "django" },
