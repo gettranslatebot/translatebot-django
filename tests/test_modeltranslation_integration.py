@@ -149,10 +149,8 @@ def test_translate_command_models_dry_run(settings, mock_env_api_key, mocker):
     output = out.getvalue()
     assert "Dry run" in output
 
-    # Verify dry_run=True was passed to apply_translations
-    mock_backend.apply_translations.assert_called_once()
-    call_kwargs = mock_backend.apply_translations.call_args[1]
-    assert call_kwargs["dry_run"] is True
+    # In dry-run mode, apply_translations should not be called
+    mock_backend.apply_translations.assert_not_called()
 
 
 def test_translate_command_models_parse_error(settings, mock_env_api_key, mocker):
@@ -260,3 +258,65 @@ def test_translate_command_models_authentication_error(
 
     with pytest.raises(CommandError, match="Authentication failed"):
         call_command("translate", target_lang="nl", models=[])
+
+
+def test_translate_command_models_saves_after_each_batch(
+    settings, mock_env_api_key, mocker
+):
+    """Test that completed batch translations are saved even if a later batch fails."""
+    from litellm.exceptions import BadRequestError
+
+    settings.TRANSLATEBOT_MODEL = "gpt-4o-mini"
+
+    # Mock the backend
+    mock_backend_class = mocker.patch(
+        "translatebot_django.backends.modeltranslation.ModeltranslationBackend"
+    )
+    mock_backend = mocker.MagicMock()
+
+    # Create fake translatable items (enough for 2+ batches)
+    fake_items = []
+    for i in range(100):
+        fake_items.append(
+            {
+                "model": Article,
+                "instance": mocker.MagicMock(),
+                "field": "content",
+                "target_field": "content_nl",
+                "source_text": f"Long content {i} " * 100,
+            }
+        )
+
+    mock_backend.gather_translatable_content.return_value = fake_items
+    mock_backend.apply_translations.return_value = 1
+    mock_backend_class.return_value = mock_backend
+
+    # First call succeeds, second raises an error
+    call_count = {"n": 0}
+
+    def translate_side_effect(text, **_kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return [f"Translated {i}" for i in range(len(text))]
+        raise BadRequestError(
+            message="credit balance is too low",
+            model="gpt-4o-mini",
+            llm_provider="openai",
+        )
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text",
+        side_effect=translate_side_effect,
+    )
+
+    # Mock get_max_tokens to force batching
+    mocker.patch(
+        "translatebot_django.management.commands.translate.get_max_tokens",
+        return_value=1000,
+    )
+
+    with pytest.raises(CommandError, match="Insufficient API credits"):
+        call_command("translate", target_lang="nl", models=[])
+
+    # The first batch should have been saved before the second batch failed
+    assert mock_backend.apply_translations.call_count == 1
