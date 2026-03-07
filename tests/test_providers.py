@@ -416,12 +416,12 @@ def test_deepl_translate_protects_placeholders():
     provider = DeepLProvider(api_key="test-key")
 
     mock_result = MagicMock()
-    mock_result.text = f"Dostupno u {_w('%(country)s')} od {_w('%(start_date)s')}"
+    mock_result.text = f"Verfügbar in {_w('%(country)s')} ab {_w('%(start_date)s')}"
 
     provider._translator.translate_text = MagicMock(return_value=[mock_result])
 
-    result = provider.translate(["Available in %(country)s from %(start_date)s"], "hr")
-    assert result == ["Dostupno u %(country)s od %(start_date)s"]
+    result = provider.translate(["Available in %(country)s from %(start_date)s"], "de")
+    assert result == ["Verfügbar in %(country)s ab %(start_date)s"]
 
     # Verify wrapped text was sent to the API
     sent_texts = provider._translator.translate_text.call_args[0][0]
@@ -474,6 +474,133 @@ def test_deepl_translate_no_placeholders_unchanged():
 
     sent_texts = provider._translator.translate_text.call_args[0][0]
     assert sent_texts == ["Hello World"]
+
+
+# --- DeepL email placeholder tests (affected languages) ---
+
+
+@pytest.mark.parametrize(
+    "text, expected_replaced, expected_originals",
+    [
+        ("%(country)s", "ph0@tb.x", ["%(country)s"]),
+        (
+            "Available in %(country)s from %(start_date)s",
+            "Available in ph0@tb.x from ph1@tb.x",
+            ["%(country)s", "%(start_date)s"],
+        ),
+        (
+            "{name} has {count} items",
+            "ph0@tb.x has ph1@tb.x items",
+            ["{name}", "{count}"],
+        ),
+        ("%s items", "ph0@tb.x items", ["%s"]),
+        ("No placeholders", "No placeholders", []),
+        ("", "", []),
+    ],
+)
+def test_replace_placeholders_with_emails(text, expected_replaced, expected_originals):
+    """_replace_placeholders_with_emails swaps placeholders for email tokens."""
+    from translatebot_django.providers.deepl import _replace_placeholders_with_emails
+
+    replaced, originals = _replace_placeholders_with_emails(text)
+    assert replaced == expected_replaced
+    assert originals == expected_originals
+
+
+@pytest.mark.parametrize(
+    "text, originals, expected",
+    [
+        ("ph0@tb.x", ["%(country)s"], "%(country)s"),
+        (
+            "Dostupno u ph0@tb.x od ph1@tb.x",
+            ["%(country)s", "%(start_date)s"],
+            "Dostupno u %(country)s od %(start_date)s",
+        ),
+        ("no tokens here", [], "no tokens here"),
+        ("", [], ""),
+        # Out-of-range index left as-is
+        ("ph5@tb.x", ["%(name)s"], "ph5@tb.x"),
+    ],
+)
+def test_restore_email_placeholders(text, originals, expected):
+    """_restore_email_placeholders swaps email tokens back to originals."""
+    from translatebot_django.providers.deepl import _restore_email_placeholders
+
+    assert _restore_email_placeholders(text, originals) == expected
+
+
+@pytest.mark.parametrize("lang", ["hr", "sr", "bs", "sq", "mk"])
+def test_deepl_translate_affected_lang_uses_email_placeholders(lang):
+    """Affected languages use email-shaped placeholders instead of <x> tags."""
+    from translatebot_django.providers.deepl import DeepLProvider
+
+    provider = DeepLProvider(api_key="test-key")
+
+    mock_result = MagicMock()
+    mock_result.text = "Dostupno u ph0@tb.x od ph1@tb.x"
+
+    provider._translator.translate_text = MagicMock(return_value=[mock_result])
+
+    result = provider.translate(["Available in %(country)s from %(start_date)s"], lang)
+    assert result == ["Dostupno u %(country)s od %(start_date)s"]
+
+    # Verify email tokens were sent, not <x> tags
+    sent_texts = provider._translator.translate_text.call_args[0][0]
+    assert sent_texts == ["Available in ph0@tb.x from ph1@tb.x"]
+
+
+@pytest.mark.parametrize("lang", ["de", "fr", "it", "nl", "ja"])
+def test_deepl_translate_normal_lang_uses_x_tags(lang):
+    """Non-affected languages still use the <x> tag approach."""
+    from translatebot_django.providers.deepl import DeepLProvider
+
+    provider = DeepLProvider(api_key="test-key")
+
+    mock_result = MagicMock()
+    mock_result.text = f"Translated {_w('%(name)s')}"
+
+    provider._translator.translate_text = MagicMock(return_value=[mock_result])
+
+    result = provider.translate(["Hello %(name)s"], lang)
+    assert result == ["Translated %(name)s"]
+
+    sent_texts = provider._translator.translate_text.call_args[0][0]
+    assert sent_texts == [f"Hello {_w('%(name)s')}"]
+
+
+def test_deepl_translate_affected_lang_no_placeholders():
+    """Affected languages with no placeholders pass through normally."""
+    from translatebot_django.providers.deepl import DeepLProvider
+
+    provider = DeepLProvider(api_key="test-key")
+
+    mock_result = MagicMock()
+    mock_result.text = "Zdravo svijete"
+
+    provider._translator.translate_text = MagicMock(return_value=[mock_result])
+
+    result = provider.translate(["Hello World"], "hr")
+    assert result == ["Zdravo svijete"]
+
+    sent_texts = provider._translator.translate_text.call_args[0][0]
+    assert sent_texts == ["Hello World"]
+
+
+def test_deepl_translate_affected_lang_preserves_html():
+    """Affected languages preserve HTML tags alongside email placeholders."""
+    from translatebot_django.providers.deepl import DeepLProvider
+
+    provider = DeepLProvider(api_key="test-key")
+
+    source = 'Click <a href="/shop">%(name)s</a> & visit <b>us</b>'
+
+    mock_result = MagicMock()
+    mock_result.text = 'Kliknite <a href="/shop">ph0@tb.x</a> & posjetite <b>nas</b>'
+
+    provider._translator.translate_text = MagicMock(return_value=[mock_result])
+
+    result = provider.translate([source], "hr")
+    assert result == ['Kliknite <a href="/shop">%(name)s</a> & posjetite <b>nas</b>']
 
 
 # --- DeepL import guard test ---

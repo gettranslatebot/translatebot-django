@@ -36,6 +36,16 @@ _PLACEHOLDER_RE = re.compile(
 # a collision with literal <x> in source text is theoretically possible but
 # unlikely in practice.
 
+# Languages where the DeepL model doesn't reliably preserve <x> tags in
+# plain-text mode.  These were added to DeepL in late 2024/2025 and run on a
+# newer model that mangles inline HTML-like tags.  For these we replace
+# placeholders with email-shaped tokens (ph0@tb.x, ph1@tb.x, …) which every
+# model preserves because emails are never translated.
+# See: https://github.com/gettranslatebot/translatebot-django/issues/95
+_EMAIL_PLACEHOLDER_LANGS = frozenset({"SQ", "BS", "HR", "MK", "SR"})
+
+_EMAIL_PH_RE = re.compile(r"ph(\d+)@tb\.x")
+
 
 def _wrap_placeholders(text):
     """Wrap format placeholders in <x> tags so DeepL leaves them alone."""
@@ -45,6 +55,34 @@ def _wrap_placeholders(text):
 def _unwrap_placeholders(text):
     """Remove <x> tags that were wrapped around placeholders."""
     return text.replace("<x>", "").replace("</x>", "")
+
+
+def _replace_placeholders_with_emails(text):
+    """Replace format placeholders with email-shaped tokens.
+
+    Returns (replaced_text, list_of_originals) so they can be restored later.
+    """
+    originals = []
+
+    def _sub(m):
+        idx = len(originals)
+        originals.append(m.group())
+        return f"ph{idx}@tb.x"
+
+    replaced = _PLACEHOLDER_RE.sub(_sub, text)
+    return replaced, originals
+
+
+def _restore_email_placeholders(text, originals):
+    """Swap email-shaped tokens back to the original placeholders."""
+
+    def _sub(m):
+        idx = int(m.group(1))
+        if idx < len(originals):
+            return originals[idx]
+        return m.group()  # defensive: leave unknown tokens as-is
+
+    return _EMAIL_PH_RE.sub(_sub, text)
 
 
 def django_to_deepl_target(lang_code):
@@ -88,12 +126,21 @@ class DeepLProvider(TranslationProvider):
 
     def translate(self, texts, target_lang, context=None, comments=None):
         deepl_lang = django_to_deepl_target(target_lang)
+        use_email_ph = deepl_lang.split("-")[0] in _EMAIL_PLACEHOLDER_LANGS
 
-        wrapped = [_wrap_placeholders(t) for t in texts]
+        if use_email_ph:
+            prepared = []
+            originals_per_text = []
+            for t in texts:
+                replaced, originals = _replace_placeholders_with_emails(t)
+                prepared.append(replaced)
+                originals_per_text.append(originals)
+        else:
+            prepared = [_wrap_placeholders(t) for t in texts]
 
         try:
             results = self._translator.translate_text(
-                wrapped,
+                prepared,
                 target_lang=deepl_lang,
                 preserve_formatting=True,
             )
@@ -117,7 +164,13 @@ class DeepLProvider(TranslationProvider):
         except self._deepl.DeepLException as e:
             raise CommandError(f"DeepL API error: {e}") from e
 
-        translations = [_unwrap_placeholders(r.text) for r in results]
+        if use_email_ph:
+            translations = [
+                _restore_email_placeholders(r.text, orig)
+                for r, orig in zip(results, originals_per_text, strict=True)
+            ]
+        else:
+            translations = [_unwrap_placeholders(r.text) for r in results]
 
         # DeepL sometimes adds a trailing dot to translations even when the
         # source string does not end with one.  Strip it in that case.
