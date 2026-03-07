@@ -29,19 +29,14 @@ _PLACEHOLDER_RE = re.compile(
 )
 
 
-_PH_OPEN = '<span translate="no">'
-_PH_CLOSE = "</span>"
-_PH_UNWRAP_RE = re.compile(r'<span translate="no">(.*?)</span>')
-
-
 def _wrap_placeholders(text):
-    """Wrap format placeholders in non-translatable spans for DeepL."""
-    return _PLACEHOLDER_RE.sub(lambda m: f"{_PH_OPEN}{m.group()}{_PH_CLOSE}", text)
+    """Wrap format placeholders in <x> tags so DeepL leaves them alone."""
+    return _PLACEHOLDER_RE.sub(lambda m: f"<x>{m.group()}</x>", text)
 
 
 def _unwrap_placeholders(text):
-    """Remove non-translatable spans that were wrapped around placeholders."""
-    return _PH_UNWRAP_RE.sub(r"\1", text)
+    """Remove <x> tags that were wrapped around placeholders."""
+    return text.replace("<x>", "").replace("</x>", "")
 
 
 def django_to_deepl_target(lang_code):
@@ -92,7 +87,6 @@ class DeepLProvider(TranslationProvider):
             results = self._translator.translate_text(
                 wrapped,
                 target_lang=deepl_lang,
-                tag_handling="html",
                 preserve_formatting=True,
             )
         except self._deepl.AuthorizationException as e:

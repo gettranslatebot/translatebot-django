@@ -230,7 +230,6 @@ def test_deepl_translate_basic(mocker):
     provider._translator.translate_text.assert_called_once_with(
         ["Hello", "World"],
         target_lang="DE",
-        tag_handling="html",
         preserve_formatting=True,
     )
 
@@ -279,7 +278,6 @@ def test_deepl_translate_uses_mapped_lang(mocker):
     provider._translator.translate_text.assert_called_once_with(
         ["Hi"],
         target_lang="EN-US",
-        tag_handling="html",
         preserve_formatting=True,
     )
 
@@ -349,13 +347,9 @@ def test_deepl_translate_generic_error():
 
 # --- DeepL placeholder protection tests ---
 
-_NO = '<span translate="no">'
-_END = "</span>"
-
-
 def _w(ph):
-    """Wrap a placeholder in a non-translatable span (test helper)."""
-    return f"{_NO}{ph}{_END}"
+    """Wrap a placeholder in <x> tags (test helper)."""
+    return f"<x>{ph}</x>"
 
 
 @pytest.mark.parametrize(
@@ -392,7 +386,7 @@ def _w(ph):
     ],
 )
 def test_wrap_placeholders(text, expected):
-    """_wrap_placeholders wraps format strings in non-translatable spans."""
+    """_wrap_placeholders wraps format strings in <x> tags."""
     from translatebot_django.providers.deepl import _wrap_placeholders
 
     assert _wrap_placeholders(text) == expected
@@ -408,7 +402,7 @@ def test_wrap_placeholders(text, expected):
     ],
 )
 def test_unwrap_placeholders(text, expected):
-    """_unwrap_placeholders strips non-translatable span wrappers."""
+    """_unwrap_placeholders strips <x> tag wrappers."""
     from translatebot_django.providers.deepl import _unwrap_placeholders
 
     assert _unwrap_placeholders(text) == expected
@@ -444,7 +438,7 @@ def test_deepl_translate_preserves_html_with_placeholders():
     source = 'Click <a href="/shop">%(name)s</a> or <br> visit <b>us</b>'
 
     mock_result = MagicMock()
-    # DeepL in HTML mode preserves all HTML tags and translates only text
+    # Without tag_handling, DeepL treats HTML as plain text and preserves it
     mock_result.text = (
         f'Klicken Sie auf <a href="/shop">{_w("%(name)s")}</a>'
         " oder <br> besuchen Sie <b>uns</b>"
@@ -457,9 +451,9 @@ def test_deepl_translate_preserves_html_with_placeholders():
         'Klicken Sie auf <a href="/shop">%(name)s</a> oder <br> besuchen Sie <b>uns</b>'
     ]
 
-    # Verify HTML mode was used
+    # Verify no tag_handling mode is used
     call_kwargs = provider._translator.translate_text.call_args[1]
-    assert call_kwargs["tag_handling"] == "html"
+    assert "tag_handling" not in call_kwargs
     assert "ignore_tags" not in call_kwargs
 
 
