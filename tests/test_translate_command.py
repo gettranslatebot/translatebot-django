@@ -349,6 +349,121 @@ def test_command_uses_languages_setting(
 
 
 @pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
+def test_command_excludes_source_language(settings, mock_completion, tmp_path):
+    """Test that command excludes LANGUAGE_CODE from target languages."""
+    import polib
+
+    # Setup .po files for en, nl, de
+    for lang in ("en", "nl", "de"):
+        lang_dir = tmp_path / "locale" / lang / "LC_MESSAGES"
+        lang_dir.mkdir(parents=True, exist_ok=True)
+        po = polib.POFile()
+        po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+        po.append(polib.POEntry(msgid="Hello", msgstr=""))
+        po.save(str(lang_dir / "django.po"))
+
+    settings.LOCALE_PATHS = [str(tmp_path / "locale")]
+    settings.LANGUAGES = [("en", "English"), ("nl", "Dutch"), ("de", "German")]
+    settings.LANGUAGE_CODE = "en"
+
+    mock_completion("Translated")
+
+    out = StringIO()
+    call_command("translate", stdout=out)
+
+    output = out.getvalue()
+    # Should translate nl and de but not en
+    assert "nl" in output
+    assert "de" in output
+    assert "Processing language: en" not in output
+
+
+@pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
+def test_command_excludes_source_language_with_region(
+    settings, mock_completion, tmp_path
+):
+    """Test that 'en-us' LANGUAGE_CODE excludes 'en' from target languages."""
+    import polib
+
+    for lang in ("en", "nl"):
+        lang_dir = tmp_path / "locale" / lang / "LC_MESSAGES"
+        lang_dir.mkdir(parents=True, exist_ok=True)
+        po = polib.POFile()
+        po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+        po.append(polib.POEntry(msgid="Hello", msgstr=""))
+        po.save(str(lang_dir / "django.po"))
+
+    settings.LOCALE_PATHS = [str(tmp_path / "locale")]
+    settings.LANGUAGES = [("en", "English"), ("nl", "Dutch")]
+    settings.LANGUAGE_CODE = "en-us"
+
+    mock_completion("Translated")
+
+    out = StringIO()
+    call_command("translate", stdout=out)
+
+    output = out.getvalue()
+    assert "nl" in output
+    assert "Processing language: en" not in output
+
+
+@pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
+def test_command_keeps_regional_variants(settings, mock_completion, tmp_path):
+    """Test that regional variants are kept (e.g. en-gb when source is en-us)."""
+    import polib
+
+    for lang in ("en_GB", "nl"):
+        lang_dir = tmp_path / "locale" / lang / "LC_MESSAGES"
+        lang_dir.mkdir(parents=True, exist_ok=True)
+        po = polib.POFile()
+        po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+        po.append(polib.POEntry(msgid="Hello", msgstr=""))
+        po.save(str(lang_dir / "django.po"))
+
+    settings.LOCALE_PATHS = [str(tmp_path / "locale")]
+    settings.LANGUAGES = [("en-gb", "British English"), ("nl", "Dutch")]
+    settings.LANGUAGE_CODE = "en-us"
+
+    mock_completion("Translated")
+
+    out = StringIO()
+    call_command("translate", stdout=out)
+
+    output = out.getvalue()
+    assert "en-gb" in output
+    assert "nl" in output
+
+
+@pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
+def test_command_explicit_target_lang_bypasses_exclusion(
+    settings, sample_po_file, mock_completion
+):
+    """Test that --target-lang allows translating to the source language."""
+    settings.LANGUAGE_CODE = "nl"
+
+    mock_completion("Vertaald")
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    # Should not raise or skip — explicit user intent is respected
+    output = out.getvalue()
+    assert "nl" in output
+
+
+@pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
+def test_command_excludes_source_language_all_excluded(settings):
+    """Test error when all languages are excluded (only source language configured)."""
+    settings.LANGUAGES = [("en", "English")]
+    settings.LANGUAGE_CODE = "en"
+
+    with pytest.raises(
+        CommandError, match="No target languages to translate to after excluding"
+    ):
+        call_command("translate")
+
+
+@pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
 def test_command_po_file_not_found():
     """Test error when .po file doesn't exist for target language."""
     with pytest.raises(CommandError, match="No translation files found"):
