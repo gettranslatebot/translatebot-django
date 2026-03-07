@@ -29,6 +29,15 @@ _PLACEHOLDER_RE = re.compile(
 )
 
 
+# Placeholders are wrapped in <x>…</x> tags before sending to DeepL.
+# No tag_handling mode is set, so DeepL treats these as opaque text it won't
+# translate or inflect.  We deliberately avoid tag_handling="html" (which
+# corrupts real HTML in model fields) and tag_handling="xml" (which chokes on
+# ampersands).  The <x> tag was chosen because DeepL empirically preserves it;
+# a collision with literal <x> in source text is theoretically possible but
+# unlikely in practice.
+
+
 def _wrap_placeholders(text):
     """Wrap format placeholders in <x> tags so DeepL leaves them alone."""
     return _PLACEHOLDER_RE.sub(lambda m: f"<x>{m.group()}</x>", text)
