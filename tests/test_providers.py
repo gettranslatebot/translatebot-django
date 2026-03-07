@@ -471,9 +471,7 @@ def test_deepl_translate_unescapes_html_entities():
 
     source = "Use < or > operators (e.g. <100 or >50)."
     mock_result = MagicMock()
-    mock_result.text = (
-        "Koristite operatore &lt; ili &gt; (npr. &lt;100 ili &gt;50)."
-    )
+    mock_result.text = "Koristite operatore &lt; ili &gt; (npr. &lt;100 ili &gt;50)."
 
     provider._translator.translate_text = MagicMock(return_value=[mock_result])
 
