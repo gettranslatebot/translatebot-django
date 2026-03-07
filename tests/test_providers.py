@@ -347,6 +347,7 @@ def test_deepl_translate_generic_error():
 
 # --- DeepL placeholder protection tests ---
 
+
 def _w(ph):
     """Wrap a placeholder in <x> tags (test helper)."""
     return f"<x>{ph}</x>"
