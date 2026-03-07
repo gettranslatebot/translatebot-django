@@ -1,4 +1,3 @@
-import html
 import re
 
 from django.core.management.base import CommandError
@@ -118,7 +117,7 @@ class DeepLProvider(TranslationProvider):
         except self._deepl.DeepLException as e:
             raise CommandError(f"DeepL API error: {e}") from e
 
-        translations = [html.unescape(_unwrap_placeholders(r.text)) for r in results]
+        translations = [_unwrap_placeholders(r.text) for r in results]
 
         # DeepL sometimes adds a trailing dot to translations even when the
         # source string does not end with one.  Strip it in that case.
