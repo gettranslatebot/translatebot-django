@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3] - 2026-03-07
+
+### Fixed
+
+- Fixed DeepL `tag_handling="html"` corrupting both format placeholders and real HTML in model field translations. Removed tag handling entirely and switched to `<x>` wrapper tags that DeepL preserves as opaque text.
+
 ## [0.9.2] - 2026-03-07
 
 ### Fixed
@@ -28,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Fixed DeepL mangling `{placeholder}` style brace placeholders during translation. Placeholders are now protected before sending to DeepL and restored afterward.
+- Fixed DeepL mangling `{placeholder}` style brace placeholders during translation. Placeholders are now wrapped in protective tags before sending to DeepL and restored afterward.
 
 ## [0.8.1] - 2026-02-25
 
@@ -316,6 +322,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[0.9.3]: https://github.com/gettranslatebot/translatebot-django/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/gettranslatebot/translatebot-django/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/gettranslatebot/translatebot-django/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/gettranslatebot/translatebot-django/compare/v0.8.1...v0.9.0
