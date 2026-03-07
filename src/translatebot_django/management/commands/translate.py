@@ -388,13 +388,29 @@ class Command(BaseCommand):
         app_labels = options.get("apps")
 
         # Determine target languages
+        source_lang = getattr(settings, "LANGUAGE_CODE", "en-us")
+        # Normalize source language: "en-us" -> "en" for comparison
+        source_lang_base = source_lang.split("-")[0]
+
         target_langs = []
         if target_lang:
             # Specific language provided
             target_langs = [target_lang]
         elif hasattr(settings, "LANGUAGES") and settings.LANGUAGES:
-            # Use all configured languages
-            target_langs = [lang_code for lang_code, _ in settings.LANGUAGES]
+            # Use all configured languages, excluding the source language.
+            # Exclude exact matches and the bare base language (e.g.
+            # LANGUAGE_CODE "en-us" excludes "en"), but keep other regional
+            # variants (e.g. "en-gb" is kept).
+            target_langs = [
+                lang_code
+                for lang_code, _ in settings.LANGUAGES
+                if lang_code != source_lang and lang_code != source_lang_base
+            ]
+            if not target_langs:
+                raise CommandError(
+                    "No target languages to translate to after excluding "
+                    f"source language '{source_lang}'."
+                )
             self.stdout.write(
                 f"ℹ️  No --target-lang specified. "
                 f"Translating to all configured languages: {', '.join(target_langs)}"
