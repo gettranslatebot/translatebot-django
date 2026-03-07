@@ -1,4 +1,3 @@
-import html
 import re
 
 from django.core.management.base import CommandError
@@ -29,19 +28,23 @@ _PLACEHOLDER_RE = re.compile(
 )
 
 
-_PH_OPEN = '<span translate="no">'
-_PH_CLOSE = "</span>"
-_PH_UNWRAP_RE = re.compile(r'<span translate="no">(.*?)</span>')
+# Placeholders are wrapped in <x>…</x> tags before sending to DeepL.
+# No tag_handling mode is set, so DeepL treats these as opaque text it won't
+# translate or inflect.  We deliberately avoid tag_handling="html" (which
+# corrupts real HTML in model fields) and tag_handling="xml" (which chokes on
+# ampersands).  The <x> tag was chosen because DeepL empirically preserves it;
+# a collision with literal <x> in source text is theoretically possible but
+# unlikely in practice.
 
 
 def _wrap_placeholders(text):
-    """Wrap format placeholders in non-translatable spans for DeepL."""
-    return _PLACEHOLDER_RE.sub(lambda m: f"{_PH_OPEN}{m.group()}{_PH_CLOSE}", text)
+    """Wrap format placeholders in <x> tags so DeepL leaves them alone."""
+    return _PLACEHOLDER_RE.sub(lambda m: f"<x>{m.group()}</x>", text)
 
 
 def _unwrap_placeholders(text):
-    """Remove non-translatable spans that were wrapped around placeholders."""
-    return _PH_UNWRAP_RE.sub(r"\1", text)
+    """Remove <x> tags that were wrapped around placeholders."""
+    return text.replace("<x>", "").replace("</x>", "")
 
 
 def django_to_deepl_target(lang_code):
@@ -92,7 +95,6 @@ class DeepLProvider(TranslationProvider):
             results = self._translator.translate_text(
                 wrapped,
                 target_lang=deepl_lang,
-                tag_handling="html",
                 preserve_formatting=True,
             )
         except self._deepl.AuthorizationException as e:
@@ -115,7 +117,7 @@ class DeepLProvider(TranslationProvider):
         except self._deepl.DeepLException as e:
             raise CommandError(f"DeepL API error: {e}") from e
 
-        translations = [html.unescape(_unwrap_placeholders(r.text)) for r in results]
+        translations = [_unwrap_placeholders(r.text) for r in results]
 
         # DeepL sometimes adds a trailing dot to translations even when the
         # source string does not end with one.  Strip it in that case.

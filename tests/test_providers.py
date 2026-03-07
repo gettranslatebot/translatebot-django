@@ -230,7 +230,6 @@ def test_deepl_translate_basic(mocker):
     provider._translator.translate_text.assert_called_once_with(
         ["Hello", "World"],
         target_lang="DE",
-        tag_handling="html",
         preserve_formatting=True,
     )
 
@@ -279,7 +278,6 @@ def test_deepl_translate_uses_mapped_lang(mocker):
     provider._translator.translate_text.assert_called_once_with(
         ["Hi"],
         target_lang="EN-US",
-        tag_handling="html",
         preserve_formatting=True,
     )
 
@@ -349,13 +347,10 @@ def test_deepl_translate_generic_error():
 
 # --- DeepL placeholder protection tests ---
 
-_NO = '<span translate="no">'
-_END = "</span>"
-
 
 def _w(ph):
-    """Wrap a placeholder in a non-translatable span (test helper)."""
-    return f"{_NO}{ph}{_END}"
+    """Wrap a placeholder in <x> tags (test helper)."""
+    return f"<x>{ph}</x>"
 
 
 @pytest.mark.parametrize(
@@ -392,7 +387,7 @@ def _w(ph):
     ],
 )
 def test_wrap_placeholders(text, expected):
-    """_wrap_placeholders wraps format strings in non-translatable spans."""
+    """_wrap_placeholders wraps format strings in <x> tags."""
     from translatebot_django.providers.deepl import _wrap_placeholders
 
     assert _wrap_placeholders(text) == expected
@@ -408,7 +403,7 @@ def test_wrap_placeholders(text, expected):
     ],
 )
 def test_unwrap_placeholders(text, expected):
-    """_unwrap_placeholders strips non-translatable span wrappers."""
+    """_unwrap_placeholders strips <x> tag wrappers."""
     from translatebot_django.providers.deepl import _unwrap_placeholders
 
     assert _unwrap_placeholders(text) == expected
@@ -444,7 +439,7 @@ def test_deepl_translate_preserves_html_with_placeholders():
     source = 'Click <a href="/shop">%(name)s</a> or <br> visit <b>us</b>'
 
     mock_result = MagicMock()
-    # DeepL in HTML mode preserves all HTML tags and translates only text
+    # Without tag_handling, DeepL treats HTML as plain text and preserves it
     mock_result.text = (
         f'Klicken Sie auf <a href="/shop">{_w("%(name)s")}</a>'
         " oder <br> besuchen Sie <b>uns</b>"
@@ -457,58 +452,10 @@ def test_deepl_translate_preserves_html_with_placeholders():
         'Klicken Sie auf <a href="/shop">%(name)s</a> oder <br> besuchen Sie <b>uns</b>'
     ]
 
-    # Verify HTML mode was used
+    # Verify no tag_handling mode is used
     call_kwargs = provider._translator.translate_text.call_args[1]
-    assert call_kwargs["tag_handling"] == "html"
+    assert "tag_handling" not in call_kwargs
     assert "ignore_tags" not in call_kwargs
-
-
-def test_deepl_translate_unescapes_html_entities():
-    """Special characters encoded by DeepL HTML mode are decoded (regression)."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
-    provider = DeepLProvider(api_key="test-key")
-
-    source = "Use < or > operators (e.g. <100 or >50)."
-    mock_result = MagicMock()
-    mock_result.text = "Koristite operatore &lt; ili &gt; (npr. &lt;100 ili &gt;50)."
-
-    provider._translator.translate_text = MagicMock(return_value=[mock_result])
-
-    result = provider.translate([source], "hr")
-    assert result == ["Koristite operatore < ili > (npr. <100 ili >50)."]
-
-
-def test_deepl_translate_unescapes_ampersand():
-    """Bare ampersands encoded by DeepL HTML mode are decoded (regression)."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
-    provider = DeepLProvider(api_key="test-key")
-
-    source = "me & you"
-    mock_result = MagicMock()
-    mock_result.text = "ich &amp; du"
-
-    provider._translator.translate_text = MagicMock(return_value=[mock_result])
-
-    result = provider.translate([source], "de")
-    assert result == ["ich & du"]
-
-
-def test_deepl_translate_unescapes_entities_with_placeholders():
-    """HTML entities and placeholders in the same string are both handled."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
-    provider = DeepLProvider(api_key="test-key")
-
-    source = "%(count)d items < 100 & more"
-    mock_result = MagicMock()
-    mock_result.text = f"{_w('%(count)d')} stavki &lt; 100 &amp; više"
-
-    provider._translator.translate_text = MagicMock(return_value=[mock_result])
-
-    result = provider.translate([source], "hr")
-    assert result == ["%(count)d stavki < 100 & više"]
 
 
 def test_deepl_translate_no_placeholders_unchanged():
