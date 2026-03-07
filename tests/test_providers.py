@@ -463,6 +463,56 @@ def test_deepl_translate_preserves_html_with_placeholders():
     assert "ignore_tags" not in call_kwargs
 
 
+def test_deepl_translate_unescapes_html_entities():
+    """Special characters encoded by DeepL HTML mode are decoded (regression)."""
+    from translatebot_django.providers.deepl import DeepLProvider
+
+    provider = DeepLProvider(api_key="test-key")
+
+    source = "Use < or > operators (e.g. <100 or >50)."
+    mock_result = MagicMock()
+    mock_result.text = (
+        "Koristite operatore &lt; ili &gt; (npr. &lt;100 ili &gt;50)."
+    )
+
+    provider._translator.translate_text = MagicMock(return_value=[mock_result])
+
+    result = provider.translate([source], "hr")
+    assert result == ["Koristite operatore < ili > (npr. <100 ili >50)."]
+
+
+def test_deepl_translate_unescapes_ampersand():
+    """Bare ampersands encoded by DeepL HTML mode are decoded (regression)."""
+    from translatebot_django.providers.deepl import DeepLProvider
+
+    provider = DeepLProvider(api_key="test-key")
+
+    source = "me & you"
+    mock_result = MagicMock()
+    mock_result.text = "ich &amp; du"
+
+    provider._translator.translate_text = MagicMock(return_value=[mock_result])
+
+    result = provider.translate([source], "de")
+    assert result == ["ich & du"]
+
+
+def test_deepl_translate_unescapes_entities_with_placeholders():
+    """HTML entities and placeholders in the same string are both handled."""
+    from translatebot_django.providers.deepl import DeepLProvider
+
+    provider = DeepLProvider(api_key="test-key")
+
+    source = "%(count)d items < 100 & more"
+    mock_result = MagicMock()
+    mock_result.text = f"{_w('%(count)d')} stavki &lt; 100 &amp; više"
+
+    provider._translator.translate_text = MagicMock(return_value=[mock_result])
+
+    result = provider.translate([source], "hr")
+    assert result == ["%(count)d stavki < 100 & više"]
+
+
 def test_deepl_translate_no_placeholders_unchanged():
     """Texts without placeholders pass through normally."""
     from translatebot_django.providers.deepl import DeepLProvider
