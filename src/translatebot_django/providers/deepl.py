@@ -1,9 +1,12 @@
 import html
+import logging
 import re
 
 from django.core.management.base import CommandError
 
 from translatebot_django.providers import TranslationProvider
+
+logger = logging.getLogger(__name__)
 
 # DeepL API limits
 MAX_TEXTS_PER_REQUEST = 50
@@ -130,6 +133,10 @@ class DeepLProvider(TranslationProvider):
         Newer models mangle <x> tags in plain-text mode, so these languages
         need email-shaped placeholder tokens and tag_handling="html".
         Results are cached after the first API call.
+
+        NOTE: This uses supports_formality as a heuristic for model version.
+        If DeepL adds formality support to newer models (or adds languages on
+        older models without formality), this correlation may break.
         """
         if self._no_formality_langs is None:
             try:
@@ -140,6 +147,10 @@ class DeepLProvider(TranslationProvider):
                     if not lang.supports_formality
                 )
             except self._deepl.DeepLException:
+                logger.warning(
+                    "Failed to fetch DeepL target languages; "
+                    "falling back to <x> tag placeholders for all languages."
+                )
                 self._no_formality_langs = frozenset()
         return deepl_lang.split("-")[0] in self._no_formality_langs
 
