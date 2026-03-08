@@ -1,3 +1,4 @@
+import html
 import re
 
 from django.core.management.base import CommandError
@@ -28,21 +29,19 @@ _PLACEHOLDER_RE = re.compile(
 )
 
 
-# Placeholders are wrapped in <x>…</x> tags before sending to DeepL.
-# No tag_handling mode is set, so DeepL treats these as opaque text it won't
-# translate or inflect.  We deliberately avoid tag_handling="html" (which
-# corrupts real HTML in model fields) and tag_handling="xml" (which chokes on
-# ampersands).  The <x> tag was chosen because DeepL empirically preserves it;
-# a collision with literal <x> in source text is theoretically possible but
-# unlikely in practice.
-
-# Languages where the DeepL model doesn't reliably preserve <x> tags in
-# plain-text mode.  These were added to DeepL in late 2024/2025 and run on a
-# newer model that mangles inline HTML-like tags.  For these we replace
-# placeholders with email-shaped tokens (ph0@tb.x, ph1@tb.x, …) which every
-# model preserves because emails are never translated.
+# Two placeholder-protection strategies depending on the DeepL language model:
+#
+# 1. Standard (<x> tags): Placeholders are wrapped in <x>…</x> tags with no
+#    tag_handling set.  DeepL treats these as opaque text.
+#
+# 2. Newer models (email tokens + tag_handling="html"): Languages whose models
+#    don't reliably preserve <x> tags use email-shaped tokens (ph0@tb.x, …)
+#    combined with tag_handling="html" to preserve both placeholders and real
+#    HTML.  Output is post-processed with html.unescape() to undo any entity
+#    encoding of special characters.  These languages are detected dynamically
+#    via the DeepL API: they are the ones that lack formality support.
+#
 # See: https://github.com/gettranslatebot/translatebot-django/issues/95
-_EMAIL_PLACEHOLDER_LANGS = frozenset({"SQ", "BS", "HR", "MK", "SR"})
 
 _EMAIL_PH_RE = re.compile(r"ph(\d+)@tb\.x")
 
@@ -123,10 +122,30 @@ class DeepLProvider(TranslationProvider):
     def __init__(self, api_key):
         self._deepl = _get_deepl_module()
         self._translator = self._deepl.Translator(api_key)
+        self._no_formality_langs = None  # lazy-loaded via _lacks_formality_support
+
+    def _lacks_formality_support(self, deepl_lang):
+        """Check if a language lacks formality support (newer DeepL model).
+
+        Newer models mangle <x> tags in plain-text mode, so these languages
+        need email-shaped placeholder tokens and tag_handling="html".
+        Results are cached after the first API call.
+        """
+        if self._no_formality_langs is None:
+            try:
+                langs = self._translator.get_target_languages()
+                self._no_formality_langs = frozenset(
+                    lang.code.split("-")[0]
+                    for lang in langs
+                    if not lang.supports_formality
+                )
+            except self._deepl.DeepLException:
+                self._no_formality_langs = frozenset()
+        return deepl_lang.split("-")[0] in self._no_formality_langs
 
     def translate(self, texts, target_lang, context=None, comments=None):
         deepl_lang = django_to_deepl_target(target_lang)
-        use_email_ph = deepl_lang.split("-")[0] in _EMAIL_PLACEHOLDER_LANGS
+        use_email_ph = self._lacks_formality_support(deepl_lang)
 
         if use_email_ph:
             prepared = []
@@ -138,12 +157,15 @@ class DeepLProvider(TranslationProvider):
         else:
             prepared = [_wrap_placeholders(t) for t in texts]
 
+        translate_kwargs = {
+            "target_lang": deepl_lang,
+            "preserve_formatting": True,
+        }
+        if use_email_ph:
+            translate_kwargs["tag_handling"] = "html"
+
         try:
-            results = self._translator.translate_text(
-                prepared,
-                target_lang=deepl_lang,
-                preserve_formatting=True,
-            )
+            results = self._translator.translate_text(prepared, **translate_kwargs)
         except self._deepl.AuthorizationException as e:
             raise CommandError(
                 f"DeepL authentication failed: {e}\n"
@@ -166,7 +188,7 @@ class DeepLProvider(TranslationProvider):
 
         if use_email_ph:
             translations = [
-                _restore_email_placeholders(r.text, orig)
+                html.unescape(_restore_email_placeholders(r.text, orig))
                 for r, orig in zip(results, originals_per_text, strict=True)
             ]
         else:
