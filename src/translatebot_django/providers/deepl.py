@@ -203,9 +203,7 @@ class DeepLProvider(TranslationProvider):
 
         if use_email_ph:
             translations = []
-            for r, orig, src in zip(
-                results, originals_per_text, texts, strict=True
-            ):
+            for r, orig, src in zip(results, originals_per_text, texts, strict=True):
                 translated = _restore_email_placeholders(r.text, orig)
                 # Only unescape entities that DeepL added (tag_handling="html"
                 # encodes plain < > & as entities).  If the source already
