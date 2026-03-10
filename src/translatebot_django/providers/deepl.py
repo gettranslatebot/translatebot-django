@@ -40,11 +40,15 @@ _PLACEHOLDER_RE = re.compile(
 # 2. Newer models (email tokens + tag_handling="html"): Languages whose models
 #    don't reliably preserve <x> tags use email-shaped tokens (ph0@tb.x, …)
 #    combined with tag_handling="html" to preserve both placeholders and real
-#    HTML.  Output is post-processed with html.unescape() to undo any entity
-#    encoding of special characters.  These languages are detected dynamically
-#    via the DeepL API: they are the ones that lack formality support.
+#    HTML.  Output is post-processed with html.unescape() to undo entity
+#    encoding — but only when the source text doesn't already contain HTML
+#    entities, since those are intentional and must be preserved.  These
+#    languages are detected dynamically via the DeepL API: they are the ones
+#    that lack formality support.
 #
 # See: https://github.com/gettranslatebot/translatebot-django/issues/95
+
+_HTML_ENTITY_RE = re.compile(r"&(?:#\d+|#x[\da-fA-F]+|[a-zA-Z]+);")
 
 _EMAIL_PH_RE = re.compile(r"ph(\d+)@tb\.x")
 
@@ -198,10 +202,17 @@ class DeepLProvider(TranslationProvider):
             raise CommandError(f"DeepL API error: {e}") from e
 
         if use_email_ph:
-            translations = [
-                html.unescape(_restore_email_placeholders(r.text, orig))
-                for r, orig in zip(results, originals_per_text, strict=True)
-            ]
+            translations = []
+            for r, orig, src in zip(
+                results, originals_per_text, texts, strict=True
+            ):
+                translated = _restore_email_placeholders(r.text, orig)
+                # Only unescape entities that DeepL added (tag_handling="html"
+                # encodes plain < > & as entities).  If the source already
+                # contains HTML entities they are intentional and must stay.
+                if not _HTML_ENTITY_RE.search(src):
+                    translated = html.unescape(translated)
+                translations.append(translated)
         else:
             translations = [_unwrap_placeholders(r.text) for r in results]
 

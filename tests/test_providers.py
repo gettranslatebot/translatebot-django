@@ -716,6 +716,51 @@ def test_deepl_translate_affected_lang_unescapes_html_entities():
     assert result == ["Koristite operatore < ili > (npr. <100 ili >50)"]
 
 
+def test_deepl_translate_affected_lang_preserves_source_entities():
+    """Source text with HTML entities is NOT unescaped (entities are intentional)."""
+    from translatebot_django.providers.deepl import DeepLProvider
+
+    provider = DeepLProvider(api_key="test-key")
+    provider._no_formality_langs = frozenset({"HR"})
+
+    mock_result = MagicMock()
+    # Source already has &lt; &gt; entities — DeepL preserves them as-is
+    mock_result.text = (
+        "Koristite operatore &lt; ili &gt; (npr. &lt;100 ili &gt;50)"
+    )
+
+    provider._translator.translate_text = MagicMock(return_value=[mock_result])
+
+    # Source contains HTML entities — they should be preserved in output
+    source = "Use &lt; or &gt; operators (e.g. &lt;100 or &gt;50)"
+    result = provider.translate([source], "hr")
+    assert result == [
+        "Koristite operatore &lt; ili &gt; (npr. &lt;100 ili &gt;50)"
+    ]
+
+
+def test_deepl_translate_affected_lang_mixed_batch_entities():
+    """Batch with plain text and HTML content handles each correctly."""
+    from translatebot_django.providers.deepl import DeepLProvider
+
+    provider = DeepLProvider(api_key="test-key")
+    provider._no_formality_langs = frozenset({"HR"})
+
+    mock_r1 = MagicMock()
+    mock_r1.text = "ja &amp; ti"  # plain source → should unescape
+    mock_r2 = MagicMock()
+    mock_r2.text = "koristite &lt;b&gt; za podebljano"  # HTML source → keep
+
+    provider._translator.translate_text = MagicMock(return_value=[mock_r1, mock_r2])
+
+    sources = ["me & you", "use &lt;b&gt; for bold"]
+    result = provider.translate(sources, "hr")
+    assert result == [
+        "ja & ti",  # unescaped: source had plain &
+        "koristite &lt;b&gt; za podebljano",  # preserved: source had entities
+    ]
+
+
 # --- DeepL import guard test ---
 
 
