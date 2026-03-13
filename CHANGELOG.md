@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.5] - 2026-03-13
+
+### Fixed
+
+- Replaced hardcoded list of DeepL newer-model languages with dynamic detection via the `supports_formality` API. Languages are now correctly identified at runtime, so newly added DeepL languages automatically get the right placeholder strategy.
+- Fixed `html.unescape` corrupting source text that intentionally contains HTML entities (e.g. `&lt;`, `&amp;`). Entity decoding now only reverses entities introduced by DeepL's `tag_handling="html"`, leaving original entities intact.
+
+### Changed
+
+- Updated litellm from 1.82.0 to 1.82.1
+
 ## [0.9.4] - 2026-03-07
 
 ### Fixed
@@ -328,6 +339,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[0.9.5]: https://github.com/gettranslatebot/translatebot-django/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/gettranslatebot/translatebot-django/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/gettranslatebot/translatebot-django/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/gettranslatebot/translatebot-django/compare/v0.9.1...v0.9.2
