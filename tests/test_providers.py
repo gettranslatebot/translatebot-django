@@ -214,7 +214,6 @@ def test_deepl_translate_basic(mocker):
     from translatebot_django.providers.deepl import DeepLProvider
 
     provider = DeepLProvider(api_key="test-key")
-    provider._no_formality_langs = frozenset()
 
     mock_result_1 = MagicMock()
     mock_result_1.text = "Hallo"
@@ -232,6 +231,7 @@ def test_deepl_translate_basic(mocker):
         ["Hello", "World"],
         target_lang="DE",
         preserve_formatting=True,
+        tag_handling="html",
     )
 
 
@@ -240,7 +240,6 @@ def test_deepl_translate_strips_trailing_dot():
     from translatebot_django.providers.deepl import DeepLProvider
 
     provider = DeepLProvider(api_key="test-key")
-    provider._no_formality_langs = frozenset()
 
     sources = ["Hello", "World", "Done.", ".", "OK", ""]
     raw_translations = ["Hallo.", "Welt.", "Fertig.", ".", "Gut", ""]
@@ -269,7 +268,6 @@ def test_deepl_translate_uses_mapped_lang(mocker):
     from translatebot_django.providers.deepl import DeepLProvider
 
     provider = DeepLProvider(api_key="test-key")
-    provider._no_formality_langs = frozenset()
 
     mock_result = MagicMock()
     mock_result.text = "Hello"
@@ -282,6 +280,7 @@ def test_deepl_translate_uses_mapped_lang(mocker):
         ["Hi"],
         target_lang="EN-US",
         preserve_formatting=True,
+        tag_handling="html",
     )
 
 
@@ -295,7 +294,6 @@ def test_deepl_translate_auth_error():
     from translatebot_django.providers.deepl import DeepLProvider
 
     provider = DeepLProvider(api_key="bad-key")
-    provider._no_formality_langs = frozenset()
     provider._translator.translate_text = MagicMock(
         side_effect=deepl.AuthorizationException("Invalid auth key")
     )
@@ -311,7 +309,6 @@ def test_deepl_translate_quota_error():
     from translatebot_django.providers.deepl import DeepLProvider
 
     provider = DeepLProvider(api_key="test-key")
-    provider._no_formality_langs = frozenset()
     provider._translator.translate_text = MagicMock(
         side_effect=deepl.QuotaExceededException("Quota exceeded")
     )
@@ -327,7 +324,6 @@ def test_deepl_translate_rate_limit_error():
     from translatebot_django.providers.deepl import DeepLProvider
 
     provider = DeepLProvider(api_key="test-key")
-    provider._no_formality_langs = frozenset()
     provider._translator.translate_text = MagicMock(
         side_effect=deepl.TooManyRequestsException("Too many requests")
     )
@@ -343,7 +339,6 @@ def test_deepl_translate_generic_error():
     from translatebot_django.providers.deepl import DeepLProvider
 
     provider = DeepLProvider(api_key="test-key")
-    provider._no_formality_langs = frozenset()
     provider._translator.translate_text = MagicMock(
         side_effect=deepl.DeepLException("Something went wrong")
     )
@@ -355,87 +350,27 @@ def test_deepl_translate_generic_error():
 # --- DeepL placeholder protection tests ---
 
 
-def _w(ph):
-    """Wrap a placeholder in <x> tags (test helper)."""
-    return f"<x>{ph}</x>"
-
-
-@pytest.mark.parametrize(
-    "text, expected",
-    [
-        # %(name)s style
-        ("%(country)s", _w("%(country)s")),
-        ("%(count)d items", f"{_w('%(count)d')} items"),
-        # %s / %d style
-        ("%s items", f"{_w('%s')} items"),
-        ("%d remaining", f"{_w('%d')} remaining"),
-        # %% literal percent
-        ("100%%", f"100{_w('%%')}"),
-        # {name} / {0} / {} style
-        ("{country}", _w("{country}")),
-        ("{0} items", f"{_w('{0}')} items"),
-        ("{} left", f"{_w('{}')} left"),
-        # Format specs
-        ("{0:.2f}", _w("{0:.2f}")),
-        ("{name!r}", _w("{name!r}")),
-        # Multiple placeholders
-        (
-            "Available in %(country)s from %(start_date)s",
-            f"Available in {_w('%(country)s')} from {_w('%(start_date)s')}",
-        ),
-        # Double braces (str.format literal braces) – NOT wrapped
-        ("{{escaped}}", "{{escaped}}"),
-        ("{{count}} items", "{{count}} items"),
-        # Arbitrary brace content – NOT wrapped
-        ("{ color: red }", "{ color: red }"),
-        # No placeholders – unchanged
-        ("Hello world", "Hello world"),
-        ("", ""),
-    ],
-)
-def test_wrap_placeholders(text, expected):
-    """_wrap_placeholders wraps format strings in <x> tags."""
-    from translatebot_django.providers.deepl import _wrap_placeholders
-
-    assert _wrap_placeholders(text) == expected
-
-
-@pytest.mark.parametrize(
-    "text, expected",
-    [
-        (_w("%(country)s"), "%(country)s"),
-        (f"Dostupno u {_w('%(country)s')}", "Dostupno u %(country)s"),
-        ("no tags here", "no tags here"),
-        ("", ""),
-    ],
-)
-def test_unwrap_placeholders(text, expected):
-    """_unwrap_placeholders strips <x> tag wrappers."""
-    from translatebot_django.providers.deepl import _unwrap_placeholders
-
-    assert _unwrap_placeholders(text) == expected
-
-
 def test_deepl_translate_protects_placeholders():
-    """Placeholders are wrapped before sending and unwrapped after."""
+    """Placeholders are replaced with email tokens before sending and restored after."""
     from translatebot_django.providers.deepl import DeepLProvider
 
     provider = DeepLProvider(api_key="test-key")
-    provider._no_formality_langs = frozenset()
 
     mock_result = MagicMock()
-    mock_result.text = f"Verfügbar in {_w('%(country)s')} ab {_w('%(start_date)s')}"
+    mock_result.text = "Verfügbar in ph0@tb.x ab ph1@tb.x"
 
     provider._translator.translate_text = MagicMock(return_value=[mock_result])
 
     result = provider.translate(["Available in %(country)s from %(start_date)s"], "de")
     assert result == ["Verfügbar in %(country)s ab %(start_date)s"]
 
-    # Verify wrapped text was sent to the API
+    # Verify email tokens were sent to the API
     sent_texts = provider._translator.translate_text.call_args[0][0]
-    assert sent_texts == [
-        f"Available in {_w('%(country)s')} from {_w('%(start_date)s')}"
-    ]
+    assert sent_texts == ["Available in ph0@tb.x from ph1@tb.x"]
+
+    # Verify tag_handling="html" is always used
+    call_kwargs = provider._translator.translate_text.call_args[1]
+    assert call_kwargs["tag_handling"] == "html"
 
 
 def test_deepl_translate_preserves_html_with_placeholders():
@@ -443,28 +378,25 @@ def test_deepl_translate_preserves_html_with_placeholders():
     from translatebot_django.providers.deepl import DeepLProvider
 
     provider = DeepLProvider(api_key="test-key")
-    provider._no_formality_langs = frozenset()
 
-    source = 'Click <a href="/shop">%(name)s</a> or <br> visit <b>us</b>'
+    source = 'Click <a href="/shop">%(name)s</a> & visit <b>us</b>'
 
     mock_result = MagicMock()
-    # Without tag_handling, DeepL treats HTML as plain text and preserves it
+    # With tag_handling="html", DeepL preserves HTML tags but encodes & as &amp;
     mock_result.text = (
-        f'Klicken Sie auf <a href="/shop">{_w("%(name)s")}</a>'
-        " oder <br> besuchen Sie <b>uns</b>"
+        'Klicken Sie auf <a href="/shop">ph0@tb.x</a> &amp; besuchen Sie <b>uns</b>'
     )
 
     provider._translator.translate_text = MagicMock(return_value=[mock_result])
 
     result = provider.translate([source], "de")
+    # html.unescape() decodes &amp; back to &
     assert result == [
-        'Klicken Sie auf <a href="/shop">%(name)s</a> oder <br> besuchen Sie <b>uns</b>'
+        'Klicken Sie auf <a href="/shop">%(name)s</a> & besuchen Sie <b>uns</b>'
     ]
 
-    # Verify no tag_handling mode is used
     call_kwargs = provider._translator.translate_text.call_args[1]
-    assert "tag_handling" not in call_kwargs
-    assert "ignore_tags" not in call_kwargs
+    assert call_kwargs["tag_handling"] == "html"
 
 
 def test_deepl_translate_no_placeholders_unchanged():
@@ -472,7 +404,6 @@ def test_deepl_translate_no_placeholders_unchanged():
     from translatebot_django.providers.deepl import DeepLProvider
 
     provider = DeepLProvider(api_key="test-key")
-    provider._no_formality_langs = frozenset()
 
     mock_result = MagicMock()
     mock_result.text = "Hallo Welt"
@@ -486,7 +417,7 @@ def test_deepl_translate_no_placeholders_unchanged():
     assert sent_texts == ["Hello World"]
 
 
-# --- DeepL email placeholder tests (affected languages) ---
+# --- DeepL email placeholder tests ---
 
 
 @pytest.mark.parametrize(
@@ -539,172 +470,37 @@ def test_restore_email_placeholders(text, originals, expected):
     assert _restore_email_placeholders(text, originals) == expected
 
 
-@pytest.mark.parametrize("lang", ["hr", "sr", "bs", "sq", "mk"])
-def test_deepl_translate_affected_lang_uses_email_placeholders(lang):
-    """Affected languages use email-shaped placeholders and tag_handling=html."""
+@pytest.mark.parametrize(
+    "lang", ["hr", "sr", "bs", "sq", "mk", "de", "fr", "it", "ja", "nl"]
+)
+def test_deepl_translate_uses_email_placeholders(lang):
+    """All languages use email-shaped placeholders and tag_handling=html."""
     from translatebot_django.providers.deepl import DeepLProvider
 
     provider = DeepLProvider(api_key="test-key")
-    provider._no_formality_langs = frozenset({"HR", "SR", "BS", "SQ", "MK"})
 
     mock_result = MagicMock()
-    mock_result.text = "Dostupno u ph0@tb.x od ph1@tb.x"
+    mock_result.text = "Translated ph0@tb.x and ph1@tb.x"
 
     provider._translator.translate_text = MagicMock(return_value=[mock_result])
 
     result = provider.translate(["Available in %(country)s from %(start_date)s"], lang)
-    assert result == ["Dostupno u %(country)s od %(start_date)s"]
+    assert result == ["Translated %(country)s and %(start_date)s"]
 
-    # Verify email tokens were sent, not <x> tags
+    # Verify email tokens were sent
     sent_texts = provider._translator.translate_text.call_args[0][0]
     assert sent_texts == ["Available in ph0@tb.x from ph1@tb.x"]
 
-    # Verify tag_handling="html" is used for affected languages
+    # Verify tag_handling="html" is always used
     call_kwargs = provider._translator.translate_text.call_args[1]
     assert call_kwargs["tag_handling"] == "html"
 
 
-@pytest.mark.parametrize("lang", ["de", "fr", "it", "nl", "ja"])
-def test_deepl_translate_normal_lang_uses_x_tags(lang):
-    """Non-affected languages still use the <x> tag approach."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
-    provider = DeepLProvider(api_key="test-key")
-    provider._no_formality_langs = frozenset()
-
-    mock_result = MagicMock()
-    mock_result.text = f"Translated {_w('%(name)s')}"
-
-    provider._translator.translate_text = MagicMock(return_value=[mock_result])
-
-    result = provider.translate(["Hello %(name)s"], lang)
-    assert result == ["Translated %(name)s"]
-
-    sent_texts = provider._translator.translate_text.call_args[0][0]
-    assert sent_texts == [f"Hello {_w('%(name)s')}"]
-
-    # Verify no tag_handling is set for normal languages
-    call_kwargs = provider._translator.translate_text.call_args[1]
-    assert "tag_handling" not in call_kwargs
-
-
-def test_deepl_translate_affected_lang_no_placeholders():
-    """Affected languages with no placeholders pass through normally."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
-    provider = DeepLProvider(api_key="test-key")
-    provider._no_formality_langs = frozenset({"HR", "SR", "BS", "SQ", "MK"})
-
-    mock_result = MagicMock()
-    mock_result.text = "Zdravo svijete"
-
-    provider._translator.translate_text = MagicMock(return_value=[mock_result])
-
-    result = provider.translate(["Hello World"], "hr")
-    assert result == ["Zdravo svijete"]
-
-    sent_texts = provider._translator.translate_text.call_args[0][0]
-    assert sent_texts == ["Hello World"]
-
-
-def test_deepl_translate_affected_lang_preserves_html():
-    """Affected languages preserve HTML via tag_handling=html + unescape."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
-    provider = DeepLProvider(api_key="test-key")
-    provider._no_formality_langs = frozenset({"HR", "SR", "BS", "SQ", "MK"})
-
-    source = 'Click <a href="/shop">%(name)s</a> & visit <b>us</b>'
-
-    mock_result = MagicMock()
-    # With tag_handling="html", DeepL preserves HTML tags but encodes & as &amp;
-    mock_result.text = (
-        'Kliknite <a href="/shop">ph0@tb.x</a> &amp; posjetite <b>nas</b>'
-    )
-
-    provider._translator.translate_text = MagicMock(return_value=[mock_result])
-
-    result = provider.translate([source], "hr")
-    # html.unescape() decodes &amp; back to &
-    assert result == ['Kliknite <a href="/shop">%(name)s</a> & posjetite <b>nas</b>']
-
-
-# --- DeepL formality detection tests ---
-
-
-def test_deepl_lacks_formality_support_queries_api():
-    """_lacks_formality_support queries get_target_languages and caches result."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
-    provider = DeepLProvider(api_key="test-key")
-
-    mock_lang_de = MagicMock()
-    mock_lang_de.code = "DE"
-    mock_lang_de.supports_formality = True
-    mock_lang_hr = MagicMock()
-    mock_lang_hr.code = "HR"
-    mock_lang_hr.supports_formality = False
-
-    provider._translator.get_target_languages = MagicMock(
-        return_value=[mock_lang_de, mock_lang_hr]
-    )
-
-    assert provider._lacks_formality_support("HR") is True
-    assert provider._lacks_formality_support("DE") is False
-
-    # API should only be called once (cached)
-    provider._translator.get_target_languages.assert_called_once()
-
-
-def test_deepl_lacks_formality_support_regional_variant():
-    """Regional variant codes (e.g. SR-LATN) match their base language."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
-    provider = DeepLProvider(api_key="test-key")
-
-    mock_lang_sr = MagicMock()
-    mock_lang_sr.code = "SR"
-    mock_lang_sr.supports_formality = False
-    mock_lang_en_us = MagicMock()
-    mock_lang_en_us.code = "EN-US"
-    mock_lang_en_us.supports_formality = True
-
-    provider._translator.get_target_languages = MagicMock(
-        return_value=[mock_lang_sr, mock_lang_en_us]
-    )
-
-    # Regional variant should match base code
-    assert provider._lacks_formality_support("SR-LATN") is True
-    assert provider._lacks_formality_support("EN-US") is False
-
-
-def test_deepl_lacks_formality_support_api_error_fallback(caplog):
-    """_lacks_formality_support falls back to empty set on API error."""
-    import logging
-
-    import deepl
-
-    from translatebot_django.providers.deepl import DeepLProvider
-
-    provider = DeepLProvider(api_key="test-key")
-    provider._translator.get_target_languages = MagicMock(
-        side_effect=deepl.DeepLException("API error")
-    )
-
-    with caplog.at_level(logging.WARNING, logger="translatebot_django.providers.deepl"):
-        # On error, falls back to empty set (all languages use <x> tags)
-        assert provider._lacks_formality_support("HR") is False
-        assert provider._lacks_formality_support("DE") is False
-
-    assert "Failed to fetch DeepL target languages" in caplog.text
-
-
-def test_deepl_translate_affected_lang_unescapes_html_entities():
+def test_deepl_translate_unescapes_html_entities():
     """html.unescape() decodes entities produced by tag_handling=html."""
     from translatebot_django.providers.deepl import DeepLProvider
 
     provider = DeepLProvider(api_key="test-key")
-    provider._no_formality_langs = frozenset({"HR"})
 
     mock_result = MagicMock()
     # DeepL with tag_handling="html" encodes < > & as entities
@@ -716,12 +512,11 @@ def test_deepl_translate_affected_lang_unescapes_html_entities():
     assert result == ["Koristite operatore < ili > (npr. <100 ili >50)"]
 
 
-def test_deepl_translate_affected_lang_preserves_source_entities():
+def test_deepl_translate_preserves_source_entities():
     """Source text with HTML entities is NOT unescaped (entities are intentional)."""
     from translatebot_django.providers.deepl import DeepLProvider
 
     provider = DeepLProvider(api_key="test-key")
-    provider._no_formality_langs = frozenset({"HR"})
 
     mock_result = MagicMock()
     # Source already has &lt; &gt; entities — DeepL preserves them as-is
@@ -735,12 +530,11 @@ def test_deepl_translate_affected_lang_preserves_source_entities():
     assert result == ["Koristite operatore &lt; ili &gt; (npr. &lt;100 ili &gt;50)"]
 
 
-def test_deepl_translate_affected_lang_mixed_batch_entities():
+def test_deepl_translate_mixed_batch_entities():
     """Batch with plain text and HTML content handles each correctly."""
     from translatebot_django.providers.deepl import DeepLProvider
 
     provider = DeepLProvider(api_key="test-key")
-    provider._no_formality_langs = frozenset({"HR"})
 
     mock_r1 = MagicMock()
     mock_r1.text = "ja &amp; ti"  # plain source → should unescape
