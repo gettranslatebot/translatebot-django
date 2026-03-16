@@ -1,12 +1,9 @@
 import html
-import logging
 import re
 
 from django.core.management.base import CommandError
 
 from translatebot_django.providers import TranslationProvider
-
-logger = logging.getLogger(__name__)
 
 # DeepL API limits
 MAX_TEXTS_PER_REQUEST = 50
@@ -32,35 +29,18 @@ _PLACEHOLDER_RE = re.compile(
 )
 
 
-# Two placeholder-protection strategies depending on the DeepL language model:
-#
-# 1. Standard (<x> tags): Placeholders are wrapped in <x>…</x> tags with no
-#    tag_handling set.  DeepL treats these as opaque text.
-#
-# 2. Newer models (email tokens + tag_handling="html"): Languages whose models
-#    don't reliably preserve <x> tags use email-shaped tokens (ph0@tb.x, …)
-#    combined with tag_handling="html" to preserve both placeholders and real
-#    HTML.  Output is post-processed with html.unescape() to undo entity
-#    encoding — but only when the source text doesn't already contain HTML
-#    entities, since those are intentional and must be preserved.  These
-#    languages are detected dynamically via the DeepL API: they are the ones
-#    that lack formality support.
+# Placeholder protection uses email-shaped tokens (ph0@tb.x, …) combined with
+# tag_handling="html" to preserve both placeholders and real HTML.  Output is
+# post-processed with html.unescape() to undo entity encoding — but only when
+# the source text doesn't already contain HTML entities, since those are
+# intentional and must be preserved.
 #
 # See: https://github.com/gettranslatebot/translatebot-django/issues/95
+#      https://github.com/gettranslatebot/translatebot-django/issues/107
 
 _HTML_ENTITY_RE = re.compile(r"&(?:#\d+|#x[\da-fA-F]+|[a-zA-Z]+);")
 
 _EMAIL_PH_RE = re.compile(r"ph(\d+)@tb\.x")
-
-
-def _wrap_placeholders(text):
-    """Wrap format placeholders in <x> tags so DeepL leaves them alone."""
-    return _PLACEHOLDER_RE.sub(lambda m: f"<x>{m.group()}</x>", text)
-
-
-def _unwrap_placeholders(text):
-    """Remove <x> tags that were wrapped around placeholders."""
-    return text.replace("<x>", "").replace("</x>", "")
 
 
 def _replace_placeholders_with_emails(text):
@@ -129,58 +109,24 @@ class DeepLProvider(TranslationProvider):
     def __init__(self, api_key):
         self._deepl = _get_deepl_module()
         self._translator = self._deepl.Translator(api_key)
-        self._no_formality_langs = None  # lazy-loaded via _lacks_formality_support
-
-    def _lacks_formality_support(self, deepl_lang):
-        """Check if a language lacks formality support (newer DeepL model).
-
-        Newer models mangle <x> tags in plain-text mode, so these languages
-        need email-shaped placeholder tokens and tag_handling="html".
-        Results are cached after the first API call.
-
-        NOTE: This uses supports_formality as a heuristic for model version.
-        If DeepL adds formality support to newer models (or adds languages on
-        older models without formality), this correlation may break.
-        """
-        if self._no_formality_langs is None:
-            try:
-                langs = self._translator.get_target_languages()
-                self._no_formality_langs = frozenset(
-                    lang.code.split("-")[0]
-                    for lang in langs
-                    if not lang.supports_formality
-                )
-            except self._deepl.DeepLException:
-                logger.warning(
-                    "Failed to fetch DeepL target languages; "
-                    "falling back to <x> tag placeholders for all languages."
-                )
-                self._no_formality_langs = frozenset()
-        return deepl_lang.split("-")[0] in self._no_formality_langs
 
     def translate(self, texts, target_lang, context=None, comments=None):
         deepl_lang = django_to_deepl_target(target_lang)
-        use_email_ph = self._lacks_formality_support(deepl_lang)
 
-        if use_email_ph:
-            prepared = []
-            originals_per_text = []
-            for t in texts:
-                replaced, originals = _replace_placeholders_with_emails(t)
-                prepared.append(replaced)
-                originals_per_text.append(originals)
-        else:
-            prepared = [_wrap_placeholders(t) for t in texts]
-
-        translate_kwargs = {
-            "target_lang": deepl_lang,
-            "preserve_formatting": True,
-        }
-        if use_email_ph:
-            translate_kwargs["tag_handling"] = "html"
+        prepared = []
+        originals_per_text = []
+        for t in texts:
+            replaced, originals = _replace_placeholders_with_emails(t)
+            prepared.append(replaced)
+            originals_per_text.append(originals)
 
         try:
-            results = self._translator.translate_text(prepared, **translate_kwargs)
+            results = self._translator.translate_text(
+                prepared,
+                target_lang=deepl_lang,
+                preserve_formatting=True,
+                tag_handling="html",
+            )
         except self._deepl.AuthorizationException as e:
             raise CommandError(
                 f"DeepL authentication failed: {e}\n"
@@ -201,18 +147,15 @@ class DeepLProvider(TranslationProvider):
         except self._deepl.DeepLException as e:
             raise CommandError(f"DeepL API error: {e}") from e
 
-        if use_email_ph:
-            translations = []
-            for r, orig, src in zip(results, originals_per_text, texts, strict=True):
-                translated = _restore_email_placeholders(r.text, orig)
-                # Only unescape entities that DeepL added (tag_handling="html"
-                # encodes plain < > & as entities).  If the source already
-                # contains HTML entities they are intentional and must stay.
-                if not _HTML_ENTITY_RE.search(src):
-                    translated = html.unescape(translated)
-                translations.append(translated)
-        else:
-            translations = [_unwrap_placeholders(r.text) for r in results]
+        translations = []
+        for r, orig, src in zip(results, originals_per_text, texts, strict=True):
+            translated = _restore_email_placeholders(r.text, orig)
+            # Only unescape entities that DeepL added (tag_handling="html"
+            # encodes plain < > & as entities).  If the source already
+            # contains HTML entities they are intentional and must stay.
+            if not _HTML_ENTITY_RE.search(src):
+                translated = html.unescape(translated)
+            translations.append(translated)
 
         # DeepL sometimes adds a trailing dot to translations even when the
         # source string does not end with one.  Strip it in that case.
