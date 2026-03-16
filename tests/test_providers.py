@@ -384,8 +384,7 @@ def test_deepl_translate_preserves_html_with_placeholders():
     mock_result = MagicMock()
     # With tag_handling="html", DeepL preserves HTML tags but encodes & as &amp;
     mock_result.text = (
-        'Klicken Sie auf <a href="/shop">ph0@tb.x</a>'
-        " &amp; besuchen Sie <b>uns</b>"
+        'Klicken Sie auf <a href="/shop">ph0@tb.x</a> &amp; besuchen Sie <b>uns</b>'
     )
 
     provider._translator.translate_text = MagicMock(return_value=[mock_result])
