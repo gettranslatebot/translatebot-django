@@ -470,7 +470,9 @@ def test_restore_email_placeholders(text, originals, expected):
     assert _restore_email_placeholders(text, originals) == expected
 
 
-@pytest.mark.parametrize("lang", ["hr", "sr", "bs", "sq", "mk", "de", "fr", "it"])
+@pytest.mark.parametrize(
+    "lang", ["hr", "sr", "bs", "sq", "mk", "de", "fr", "it", "ja", "nl"]
+)
 def test_deepl_translate_uses_email_placeholders(lang):
     """All languages use email-shaped placeholders and tag_handling=html."""
     from translatebot_django.providers.deepl import DeepLProvider
