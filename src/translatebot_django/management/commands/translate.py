@@ -195,7 +195,6 @@ def translate_text(text, target_lang, model, api_key, context=None, comments=Non
                 warnings.filterwarnings(
                     "ignore",
                     message="Pydantic serializer warnings",
-                    module="pydantic",
                 )
                 response = completion(
                     model=model,
