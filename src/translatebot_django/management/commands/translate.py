@@ -188,13 +188,15 @@ def translate_text(text, target_lang, model, api_key, context=None, comments=Non
     while True:
         try:
             # Suppress Pydantic serialization warnings from litellm.
-            # litellm's Message model defines 10 fields but providers
-            # typically populate only ~5, triggering harmless warnings
-            # during internal serialization. Observed in litellm 1.82.4.
+            # litellm's response Message model has optional fields that
+            # are left unset by most providers, which causes pydantic-core
+            # to emit harmless UserWarning messages during serialization.
+            # Observed in litellm 1.82.4 — check if still needed on upgrade.
             with warnings.catch_warnings():
                 warnings.filterwarnings(
                     "ignore",
                     message="Pydantic serializer warnings",
+                    category=UserWarning,
                 )
                 response = completion(
                     model=model,
