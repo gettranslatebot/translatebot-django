@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+import warnings
 from collections import defaultdict
 from contextlib import contextmanager
 from pathlib import Path
@@ -186,22 +187,33 @@ def translate_text(text, target_lang, model, api_key, context=None, comments=Non
     attempt = 0
     while True:
         try:
-            response = completion(
-                model=model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": system_prompt,
-                    },
-                    {
-                        "role": "user",
-                        "content": preamble
-                        + json.dumps(input_payload, ensure_ascii=False),
-                    },
-                ],
-                temperature=0.2,  # Low randomness for consistency
-                api_key=api_key,
-            )
+            # Suppress Pydantic serialization warnings from litellm.
+            # litellm's response Message model has optional fields that
+            # are left unset by most providers, which causes pydantic-core
+            # to emit harmless UserWarning messages during serialization.
+            # Observed in litellm 1.82.4 — check if still needed on upgrade.
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="Pydantic serializer warnings",
+                    category=UserWarning,
+                )
+                response = completion(
+                    model=model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": system_prompt,
+                        },
+                        {
+                            "role": "user",
+                            "content": preamble
+                            + json.dumps(input_payload, ensure_ascii=False),
+                        },
+                    ],
+                    temperature=0.2,  # Low randomness for consistency
+                    api_key=api_key,
+                )
             break  # Success, exit retry loop
         except RateLimitError as e:
             if attempt >= MAX_RETRIES - 1:
