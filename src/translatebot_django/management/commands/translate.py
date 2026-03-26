@@ -60,6 +60,10 @@ _LITELLM_MISSING_MSG = (
 )
 
 
+class TranslationValidationError(ValueError):
+    """Raised when the LLM response fails structural validation."""
+
+
 def _require_litellm():
     """Raise CommandError if litellm is not installed."""
     if not _has_litellm:
@@ -68,7 +72,7 @@ def _require_litellm():
 
 @contextmanager
 def handle_api_errors():
-    """Context manager for handling API errors with user-friendly messages."""
+    """Convert API and response-validation exceptions into CommandErrors."""
     try:
         yield
     except AuthenticationError as e:
@@ -87,7 +91,7 @@ def handle_api_errors():
                 "Please visit your API provider's billing page to add credits."
             ) from e
         raise CommandError(f"API request failed: {str(e)}") from e
-    except ValueError as e:
+    except TranslationValidationError as e:
         raise CommandError(
             f"Translation response validation failed: {e}\n"
             "Any translations completed before this error have been saved."
@@ -251,37 +255,33 @@ def translate_text(text, target_lang, model, api_key, context=None, comments=Non
     if start != -1 and end != -1:
         content = content[start : end + 1]
 
+    preview = content[:500]
+    context_suffix = f"Model: {model}\nContent preview: {preview}"
+
     try:
         translated = json.loads(content)
     except json.JSONDecodeError as e:
         raise ValueError(
-            f"Failed to parse JSON response from API.\n"
-            f"Model: {model}\n"
-            f"Content preview (first 500 chars): {content[:500]}\n"
-            f"Error: {e}"
+            f"Failed to parse JSON response from API.\n{context_suffix}\nError: {e}"
         ) from e
 
     if not isinstance(translated, list):
-        raise ValueError(
+        raise TranslationValidationError(
             f"API returned {type(translated).__name__} instead of a JSON array.\n"
-            f"Model: {model}\n"
-            f"Content preview (first 500 chars): {content[:500]}"
+            f"{context_suffix}"
         )
 
     if len(translated) != len(text):
-        raise ValueError(
-            f"API returned {len(translated)} translations, "
-            f"expected {len(text)}.\n"
-            f"Model: {model}\n"
-            f"Content preview (first 500 chars): {content[:500]}"
+        raise TranslationValidationError(
+            f"API returned {len(translated)} translations, expected {len(text)}.\n"
+            f"{context_suffix}"
         )
 
     non_strings = [i for i, v in enumerate(translated) if not isinstance(v, str)]
     if non_strings:
-        raise ValueError(
+        raise TranslationValidationError(
             f"API returned non-string elements at indices {non_strings[:5]}.\n"
-            f"Model: {model}\n"
-            f"Content preview (first 500 chars): {content[:500]}"
+            f"{context_suffix}"
         )
 
     return translated
