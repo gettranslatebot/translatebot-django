@@ -350,8 +350,10 @@ class Command(BaseCommand):
 
         parser.add_argument(
             "--target-lang",
+            action="append",
             required=not has_languages,  # Optional if LANGUAGES is defined
             help="Target language code, e.g. de, fr, nl. "
+            "Can be used multiple times to translate to multiple languages. "
             + (
                 "Optional when LANGUAGES is defined in settings - "
                 "will translate to all configured languages."
@@ -406,8 +408,12 @@ class Command(BaseCommand):
 
         target_langs = []
         if target_lang:
-            # Specific language provided
-            target_langs = [target_lang]
+            # Normalize: action="append" gives a list from CLI, but
+            # call_command(target_lang="nl") passes a plain string.
+            if isinstance(target_lang, str):
+                target_langs = [target_lang]
+            else:
+                target_langs = list(target_lang)
         elif hasattr(settings, "LANGUAGES") and settings.LANGUAGES:
             # Use all configured languages, excluding the source language.
             # Exclude exact matches and the bare base language (e.g.
