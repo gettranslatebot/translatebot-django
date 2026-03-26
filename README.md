@@ -29,7 +29,7 @@ TranslateBot is a dedicated tool that sits between "do it by hand" and "pay for 
 
 ## Installation
 
-For PO file translation, TranslateBot is a development tool — install it as a dev dependency:
+For PO file translation, TranslateBot is a development tool; install it as a dev dependency:
 
 ```bash
 uv add --dev translatebot-django
