@@ -453,9 +453,9 @@ def test_command_explicit_target_lang_bypasses_exclusion(
 
 @pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
 def test_command_multiple_target_lang_flags(settings, mock_completion, tmp_path):
-    """Test that passing --target-lang multiple times translates all specified languages.
+    """Test multiple --target-lang flags translate all languages.
 
-    Regression test for https://github.com/gettranslatebot/translatebot-django/issues/142
+    Regression test for #142:
     Previously, only the last --target-lang value was used because the argument
     used argparse's default 'store' action instead of 'append'.
     """
@@ -479,7 +479,9 @@ def test_command_multiple_target_lang_flags(settings, mock_completion, tmp_path)
     # Both .po files must have been translated, not just the last language
     nl_po = polib.pofile(str(tmp_path / "locale" / "nl" / "LC_MESSAGES" / "django.po"))
     de_po = polib.pofile(str(tmp_path / "locale" / "de" / "LC_MESSAGES" / "django.po"))
-    assert nl_po[0].msgstr == "Translated", "nl was not translated — only the last --target-lang was processed"
+    assert nl_po[0].msgstr == "Translated", (
+        "nl was not translated — only the last --target-lang was processed"
+    )
     assert de_po[0].msgstr == "Translated", "de was not translated"
 
 
