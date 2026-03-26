@@ -452,6 +452,38 @@ def test_command_explicit_target_lang_bypasses_exclusion(
 
 
 @pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
+def test_command_multiple_target_lang_flags(settings, mock_completion, tmp_path):
+    """Test that passing --target-lang multiple times translates all specified languages.
+
+    Regression test for https://github.com/gettranslatebot/translatebot-django/issues/142
+    Previously, only the last --target-lang value was used because the argument
+    used argparse's default 'store' action instead of 'append'.
+    """
+    # Setup .po files for both nl and de
+    for lang in ("nl", "de"):
+        lang_dir = tmp_path / "locale" / lang / "LC_MESSAGES"
+        lang_dir.mkdir(parents=True, exist_ok=True)
+        po = polib.POFile()
+        po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+        po.append(polib.POEntry(msgid="Hello", msgstr=""))
+        po.save(str(lang_dir / "django.po"))
+
+    settings.LOCALE_PATHS = [str(tmp_path / "locale")]
+
+    mock_completion("Translated")
+
+    out = StringIO()
+    # Pass as CLI-style args so they go through argparse
+    call_command("translate", "--target-lang=nl", "--target-lang=de", stdout=out)
+
+    # Both .po files must have been translated, not just the last language
+    nl_po = polib.pofile(str(tmp_path / "locale" / "nl" / "LC_MESSAGES" / "django.po"))
+    de_po = polib.pofile(str(tmp_path / "locale" / "de" / "LC_MESSAGES" / "django.po"))
+    assert nl_po[0].msgstr == "Translated", "nl was not translated — only the last --target-lang was processed"
+    assert de_po[0].msgstr == "Translated", "de was not translated"
+
+
+@pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
 def test_command_excludes_source_language_all_excluded(settings):
     """Test error when all languages are excluded (only source language configured)."""
     settings.LANGUAGES = [("en", "English")]
