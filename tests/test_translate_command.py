@@ -1379,6 +1379,51 @@ def test_translate_text_invalid_json_response(mocker):
         translate_text(["Hello"], "nl", "gpt-4o-mini", "test-key")
 
 
+def test_translate_text_non_array_json_response(mocker):
+    """Test error handling when API returns valid JSON that is not an array."""
+    mock_response = mocker.MagicMock()
+    mock_response.choices = [mocker.MagicMock()]
+    mock_response.choices[0].message.content = '"Hallo wereld"'
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.completion",
+        return_value=mock_response,
+    )
+
+    with pytest.raises(ValueError, match="str instead of a JSON array"):
+        translate_text(["Hello, world!"], "nl", "gpt-4o-mini", "test-key")
+
+
+def test_translate_text_wrong_count_response(mocker):
+    """Test error handling when API returns wrong number of translations."""
+    mock_response = mocker.MagicMock()
+    mock_response.choices = [mocker.MagicMock()]
+    mock_response.choices[0].message.content = '["Hallo"]'
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.completion",
+        return_value=mock_response,
+    )
+
+    with pytest.raises(ValueError, match="returned 1 translations, expected 2"):
+        translate_text(["Hello", "Goodbye"], "nl", "gpt-4o-mini", "test-key")
+
+
+def test_translate_text_non_string_elements_response(mocker):
+    """Test error handling when API returns array with non-string elements."""
+    mock_response = mocker.MagicMock()
+    mock_response.choices = [mocker.MagicMock()]
+    mock_response.choices[0].message.content = '[{"translation": "Hallo"}]'
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.completion",
+        return_value=mock_response,
+    )
+
+    with pytest.raises(ValueError, match="non-string elements"):
+        translate_text(["Hello"], "nl", "gpt-4o-mini", "test-key")
+
+
 def test_translate_text_rate_limit_retry_success(mocker):
     """Test that rate limit errors trigger retry and succeed on subsequent attempt."""
     from litellm.exceptions import RateLimitError

@@ -87,6 +87,11 @@ def handle_api_errors():
                 "Please visit your API provider's billing page to add credits."
             ) from e
         raise CommandError(f"API request failed: {str(e)}") from e
+    except ValueError as e:
+        raise CommandError(
+            f"Translation response validation failed: {e}\n"
+            "Any translations completed before this error have been saved."
+        ) from e
 
 
 def get_token_count(text):
@@ -255,6 +260,29 @@ def translate_text(text, target_lang, model, api_key, context=None, comments=Non
             f"Content preview (first 500 chars): {content[:500]}\n"
             f"Error: {e}"
         ) from e
+
+    if not isinstance(translated, list):
+        raise ValueError(
+            f"API returned {type(translated).__name__} instead of a JSON array.\n"
+            f"Model: {model}\n"
+            f"Content preview (first 500 chars): {content[:500]}"
+        )
+
+    if len(translated) != len(text):
+        raise ValueError(
+            f"API returned {len(translated)} translations, "
+            f"expected {len(text)}.\n"
+            f"Model: {model}\n"
+            f"Content preview (first 500 chars): {content[:500]}"
+        )
+
+    non_strings = [i for i, v in enumerate(translated) if not isinstance(v, str)]
+    if non_strings:
+        raise ValueError(
+            f"API returned non-string elements at indices {non_strings[:5]}.\n"
+            f"Model: {model}\n"
+            f"Content preview (first 500 chars): {content[:500]}"
+        )
 
     return translated
 
