@@ -221,7 +221,9 @@ def translate_text(text, target_lang, model, api_key, context=None, comments=Non
                             + json.dumps(input_payload, ensure_ascii=False),
                         },
                     ],
-                    temperature=0.2,  # Low randomness for consistency
+                    temperature=0.2,
+                    reasoning_effort="low",
+                    drop_params=True,
                     api_key=api_key,
                 )
             break  # Success, exit retry loop
