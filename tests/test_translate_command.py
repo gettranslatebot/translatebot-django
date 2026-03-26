@@ -10,7 +10,10 @@ import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
-from translatebot_django.management.commands.translate import translate_text
+from translatebot_django.management.commands.translate import (
+    TranslationValidationError,
+    translate_text,
+)
 from translatebot_django.utils import (
     combine_translation_contexts,
     get_all_po_paths,
@@ -1216,6 +1219,25 @@ def test_command_bad_request_error_generic(sample_po_file, mocker):
         call_command("translate", target_lang="nl")
 
 
+@pytest.mark.usefixtures("temp_locale_dir", "mock_model_config")
+def test_command_validation_error_converts_to_command_error(sample_po_file, mocker):
+    """Validation errors are converted to CommandError."""
+    mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text",
+        side_effect=TranslationValidationError(
+            "API returned 1 translations, expected 2.\nModel: gpt-4o-mini"
+        ),
+    )
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.get_api_key",
+        return_value="test-key",
+    )
+
+    with pytest.raises(CommandError, match="Translation response validation failed"):
+        call_command("translate", target_lang="nl")
+
+
 @pytest.mark.usefixtures("mock_model_config")
 def test_command_credit_balance_error_model_translation(mocker):
     """Test that credit balance errors are caught in model translation path."""
@@ -1363,19 +1385,49 @@ def test_translate_text_api_returns_empty_content(mocker):
         translate_text(["Hello"], "nl", "gpt-4o-mini", "test-key")
 
 
-def test_translate_text_invalid_json_response(mocker):
-    """Test error handling when API returns invalid JSON."""
-    # Mock response with invalid JSON
+def _mock_completion_content(mocker, content):
+    """Patch the completion call to return a response with the given content string."""
     mock_response = mocker.MagicMock()
     mock_response.choices = [mocker.MagicMock()]
-    mock_response.choices[0].message.content = "This is not JSON at all"
-
+    mock_response.choices[0].message.content = content
     mocker.patch(
         "translatebot_django.management.commands.translate.completion",
         return_value=mock_response,
     )
 
+
+def test_translate_text_invalid_json_response(mocker):
+    """Test error handling when API returns invalid JSON."""
+    _mock_completion_content(mocker, "This is not JSON at all")
+
     with pytest.raises(ValueError, match="Failed to parse JSON response"):
+        translate_text(["Hello"], "nl", "gpt-4o-mini", "test-key")
+
+
+def test_translate_text_non_array_json_response(mocker):
+    """Test error handling when API returns valid JSON that is not an array."""
+    _mock_completion_content(mocker, '"Hallo wereld"')
+
+    with pytest.raises(TranslationValidationError, match="str instead of a JSON array"):
+        translate_text(["Hello, world!"], "nl", "gpt-4o-mini", "test-key")
+
+
+def test_translate_text_wrong_count_response(mocker):
+    """Test error handling when API returns wrong number of translations."""
+    _mock_completion_content(mocker, '["Hallo"]')
+
+    with pytest.raises(
+        TranslationValidationError,
+        match="returned 1 translations, expected 2",
+    ):
+        translate_text(["Hello", "Goodbye"], "nl", "gpt-4o-mini", "test-key")
+
+
+def test_translate_text_non_string_elements_response(mocker):
+    """Test error handling when API returns array with non-string elements."""
+    _mock_completion_content(mocker, '[{"translation": "Hallo"}]')
+
+    with pytest.raises(TranslationValidationError, match="non-string elements"):
         translate_text(["Hello"], "nl", "gpt-4o-mini", "test-key")
 
 
