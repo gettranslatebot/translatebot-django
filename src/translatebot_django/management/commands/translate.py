@@ -152,7 +152,8 @@ def build_system_prompt(context=None):
 
 def create_preamble(target_lang, count):
     return (
-        f"Translate the following {count} strings to {target_lang}. "
+        f"Translate the following {count} strings to the language"
+        f" with language code '{target_lang}'. "
         f"Return only a valid JSON array with exactly {count} translated strings:\n"
     )
 
