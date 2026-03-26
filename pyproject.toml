@@ -34,9 +34,9 @@ classifiers = [
 ]
 keywords = ["django", "translation", "i18n", "localization", "gettext", "po", "openai"]
 dependencies = [
-  "Django>=4.2",
-  "polib>=1.2.0",
-  "litellm>=1.80.0",
+  "Django>=4.2,<7",
+  "polib>=1.2.0,<2",
+  "litellm>=1.80.0,<2",
 ]
 
 [project.urls]
@@ -57,10 +57,10 @@ dev = [
   "deepl>=1.0.0",
 ]
 deepl = [
-  "deepl>=1.0.0",
+  "deepl>=1.0.0,<2",
 ]
 modeltranslation = [
-  "django-modeltranslation>=0.18",
+  "django-modeltranslation>=0.18,<1",
 ]
 
 [tool.setuptools]
