@@ -29,10 +29,16 @@ TranslateBot is a dedicated tool that sits between "do it by hand" and "pay for 
 
 ## Installation
 
-TranslateBot is a development tool, so we recommend installing it as a dev dependency:
+For PO file translation, TranslateBot is a development tool — install it as a dev dependency:
 
 ```bash
 uv add --dev translatebot-django
+```
+
+For model translation at runtime, install it as a regular dependency instead (see [Python API docs](https://translatebot.dev/docs/usage/python-api/)):
+
+```bash
+uv add translatebot-django
 ```
 
 ## Quick Start
