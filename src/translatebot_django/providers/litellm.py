@@ -20,10 +20,12 @@ class LiteLLMProvider(TranslationProvider):
             comments=comments,
         )
 
-    def batch(self, texts, target_lang, comments=None):
+    def batch(self, texts, target_lang, comments=None, batch_size=None):
         from translatebot_django.management.commands.translate import batch_by_tokens
 
-        return batch_by_tokens(texts, target_lang, self._model, comments=comments)
+        return batch_by_tokens(
+            texts, target_lang, self._model, comments=comments, max_batch_size=batch_size
+        )
 
     @property
     def name(self):

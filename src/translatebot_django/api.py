@@ -8,6 +8,7 @@ def translate(
     overwrite=False,
     apps=None,
     models=None,
+    batch_size=None,
 ):
     """Translate PO files and/or model fields programmatically.
 
@@ -33,6 +34,9 @@ def translate(
             - ``True`` or ``[]``: translate all registered model fields.
             - A list of model names (e.g. ``["Article", "Product"]``):
               translate only those models.
+        batch_size: Maximum number of strings per translation batch. When set,
+             overrides the provider's automatic batching. Reduce this if the AI
+             model fails on large or complex inputs.
 
     Raises:
         ValueError: If *apps* and *models* are both provided, or if *models*
@@ -96,6 +100,15 @@ def translate(
             raise ValueError(
                 "models must be True, a list of model names, or None. "
                 f"Got {type(models).__name__}."
+            )
+
+    if batch_size is not None:
+        if isinstance(batch_size, int):
+            kwargs["batch_size"] = batch_size
+        else:
+            raise ValueError(
+                "batch_size must be an integer or None. "
+                f"Got {type(batch_size).__name__}."
             )
 
     call_command("translate", **kwargs)

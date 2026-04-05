@@ -165,11 +165,18 @@ class DeepLProvider(TranslationProvider):
 
         return translations
 
-    def batch(self, texts, target_lang, comments=None):
+    def batch(self, texts, target_lang, comments=None, batch_size=None):
         """Split texts into batches respecting DeepL API limits.
 
         DeepL limits: max 50 texts per request, max 128KB total request size.
+        If batch_size is also provided, the effective per-batch limit is the
+        minimum of the DeepL maximum and batch_size.
         """
+        max_count = (
+            min(MAX_TEXTS_PER_REQUEST, batch_size)
+            if batch_size is not None
+            else MAX_TEXTS_PER_REQUEST
+        )
         groups = []
         current_group = []
         current_size = 0
@@ -177,7 +184,7 @@ class DeepLProvider(TranslationProvider):
         for text in texts:
             text_size = len(text.encode("utf-8"))
 
-            would_exceed_count = len(current_group) >= MAX_TEXTS_PER_REQUEST
+            would_exceed_count = len(current_group) >= max_count
             would_exceed_size = (
                 current_group and current_size + text_size > MAX_REQUEST_SIZE_BYTES
             )

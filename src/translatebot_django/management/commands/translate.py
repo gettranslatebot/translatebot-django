@@ -290,7 +290,7 @@ def translate_text(text, target_lang, model, api_key, context=None, comments=Non
     return translated
 
 
-def batch_by_tokens(texts, target_lang, model, comments=None):
+def batch_by_tokens(texts, target_lang, model, comments=None, max_batch_size=None):
     """Split texts into token-sized groups for LLM translation.
 
     Args:
@@ -298,6 +298,7 @@ def batch_by_tokens(texts, target_lang, model, comments=None):
         target_lang: Target language code.
         model: LLM model name (used for token limit lookup).
         comments: Optional dict mapping source strings to developer comments.
+        max_batch_size: Optional hard cap on the number of strings per batch.
 
     Returns:
         List of lists of strings.
@@ -306,7 +307,13 @@ def batch_by_tokens(texts, target_lang, model, comments=None):
     groups = []
     group_candidate = []
     for item in texts:
-        group_candidate += [item]
+        group_candidate.append(item)
+        
+        # Flush immediately if the hard cap is reached and skip token check
+        if max_batch_size is not None and len(group_candidate) >= max_batch_size:
+            groups.append(group_candidate)
+            group_candidate = []
+            continue
 
         # Use the actual payload (with comments) for input token counting
         input_payload = _build_input_payload(group_candidate, comments)
@@ -324,7 +331,8 @@ def batch_by_tokens(texts, target_lang, model, comments=None):
                 groups.append(group_candidate[:-1])
             group_candidate = [item]
 
-    groups.append(group_candidate)
+    if group_candidate:
+        groups.append(group_candidate)
     return groups
 
 
@@ -411,6 +419,14 @@ class Command(BaseCommand):
             help="Only translate .po files for the specified Django app. "
             "Can be used multiple times to include multiple apps.",
         )
+        
+        parser.add_argument(
+            "--batch-size",
+            type=int,
+            default=None,
+            help="Maximum number of strings per translation batch. "
+            "Reduce this if the AI model fails on large or complex inputs.",
+        )
 
         # Only add modeltranslation-related arguments if it's available
         if is_modeltranslation_available():
@@ -490,6 +506,7 @@ class Command(BaseCommand):
             )
 
         api_key = get_api_key()
+        batch_size = options["batch_size"]
         provider = get_provider(api_key)
 
         # Load translation context from TRANSLATING.md if available
@@ -525,6 +542,7 @@ class Command(BaseCommand):
                     provider,
                     context,
                     app_labels=app_labels,
+                    batch_size=batch_size,
                 )
 
             # Handle model field translation (NEW)
@@ -536,6 +554,7 @@ class Command(BaseCommand):
                     provider=provider,
                     model_names=models_arg,
                     context=context,
+                    batch_size=batch_size,
                 )
 
         if len(target_langs) > 1:
@@ -584,6 +603,7 @@ class Command(BaseCommand):
         provider,
         context=None,
         app_labels=None,
+        batch_size=None,
     ):
         """Translate .po files (existing logic refactored into method)."""
         # Find all .po files for the target language
@@ -629,7 +649,7 @@ class Command(BaseCommand):
             if not all_msgids:
                 continue
 
-            groups = provider.batch(all_msgids, target_lang, comments=all_comments)
+            groups = provider.batch(all_msgids, target_lang, comments=all_comments, batch_size=batch_size)
 
             if dry_run:
                 for group in groups:
@@ -730,6 +750,7 @@ class Command(BaseCommand):
         provider,
         model_names=None,
         context=None,
+        batch_size=None,
     ):
         """Translate django-modeltranslation model fields."""
         from translatebot_django.backends.modeltranslation import (
@@ -773,7 +794,7 @@ class Command(BaseCommand):
 
         # Batch the source texts using the provider's batching strategy
         source_texts = [item["source_text"] for item in items]
-        text_batches = provider.batch(source_texts, target_lang)
+        text_batches = provider.batch(source_texts, target_lang, batch_size=batch_size)
 
         # Re-associate batched texts with their items
         groups = []
