@@ -45,13 +45,16 @@ class TranslationProvider(ABC):
         """Whether this provider can use TRANSLATING.md context."""
 
 
-def get_provider(api_key):
+def get_provider(api_key, model=None):
     """Create a translation provider based on Django settings.
 
     Reads TRANSLATEBOT_PROVIDER from settings. Defaults to 'litellm' if not set.
 
     Args:
         api_key: API key for the provider.
+        model: Optional model name override. When provided, takes precedence over
+            ``TRANSLATEBOT_MODEL`` in settings. Only applies to the 'litellm'
+            provider; ignored for 'deepl'.
 
     Returns:
         A TranslationProvider instance.
@@ -71,8 +74,8 @@ def get_provider(api_key):
         from translatebot_django.providers.litellm import LiteLLMProvider
         from translatebot_django.utils import get_model
 
-        model = get_model()
-        return LiteLLMProvider(model=model, api_key=api_key)
+        resolved_model = model if model is not None else get_model()
+        return LiteLLMProvider(model=resolved_model, api_key=api_key)
 
     if provider_name == "deepl":
         from translatebot_django.providers.deepl import DeepLProvider

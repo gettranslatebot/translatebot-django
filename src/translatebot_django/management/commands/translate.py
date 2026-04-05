@@ -411,6 +411,14 @@ class Command(BaseCommand):
             help="Only translate .po files for the specified Django app. "
             "Can be used multiple times to include multiple apps.",
         )
+        
+        parser.add_argument(
+            "--model",
+            default=None,
+            help="LiteLLM model to use for this run (e.g. 'gpt-4o', "
+            "'claude-3-5-haiku-20241022'). Overrides TRANSLATEBOT_MODEL in "
+            "settings. Ignored when using the DeepL provider.",
+        )
 
         # Only add modeltranslation-related arguments if it's available
         if is_modeltranslation_available():
@@ -490,7 +498,16 @@ class Command(BaseCommand):
             )
 
         api_key = get_api_key()
-        provider = get_provider(api_key)
+        model_override = options.get("model")
+        provider = get_provider(api_key, model=model_override)
+
+        # Warn if --model is passed with a provider that doesn't use it
+        if model_override and not hasattr(provider, "_model"):
+            self.stdout.write(
+                self.style.WARNING(
+                    f"⚠️  --model is ignored for the '{provider.name}' provider."
+                )
+            )
 
         # Load translation context from TRANSLATING.md if available
         context = get_translation_context()

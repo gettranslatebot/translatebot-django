@@ -8,6 +8,7 @@ def translate(
     overwrite=False,
     apps=None,
     models=None,
+    model=None,
 ):
     """Translate PO files and/or model fields programmatically.
 
@@ -33,6 +34,10 @@ def translate(
             - ``True`` or ``[]``: translate all registered model fields.
             - A list of model names (e.g. ``["Article", "Product"]``):
               translate only those models.
+        model: LiteLLM model name to use for this call (e.g. ``"gpt-4o"`` or
+            ``"claude-3-5-haiku-20241022"``). When provided, overrides
+            ``TRANSLATEBOT_MODEL`` in settings. Ignored when using the DeepL
+            provider.
 
     Raises:
         ValueError: If *apps* and *models* are both provided, or if *models*
@@ -97,5 +102,8 @@ def translate(
                 "models must be True, a list of model names, or None. "
                 f"Got {type(models).__name__}."
             )
+
+    if model is not None:
+        kwargs["model"] = model
 
     call_command("translate", **kwargs)
