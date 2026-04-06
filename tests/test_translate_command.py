@@ -11,6 +11,7 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 
 from translatebot_django.management.commands.translate import (
+    Command,
     TranslationValidationError,
     translate_text,
 )
@@ -2936,3 +2937,156 @@ def test_batch_by_tokens_accounts_for_comments(mocker):
     # Verify all strings are still present across batches
     assert sum(len(b) for b in batches_with) == 10
     assert sum(len(b) for b in batches_without) == 10
+
+
+def test_save_po_translations_preserves_existing(tmp_path):
+    """Existing non-fuzzy translations must not be overwritten by default.
+
+    Regression test: when django.po has an untranslated msgid that is already
+    translated in djangojs.po, _save_po_translations should only fill in the
+    empty one and leave the existing translation untouched.
+    """
+
+    lc = tmp_path / "nl" / "LC_MESSAGES"
+    lc.mkdir(parents=True)
+
+    # djangojs.po already has "last" translated as "última"
+    po_js = polib.POFile()
+    po_js.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po_js.append(polib.POEntry(msgid="last", msgstr="última"))
+    js_path = lc / "djangojs.po"
+    po_js.save(str(js_path))
+
+    # django.po has "last" untranslated
+    po_dj = polib.POFile()
+    po_dj.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po_dj.append(polib.POEntry(msgid="last", msgstr=""))
+    dj_path = lc / "django.po"
+    po_dj.save(str(dj_path))
+
+    # Simulate the LLM returning "último"
+    msgid_to_translation = {"last": "último"}
+
+    Command._save_po_translations([dj_path, js_path], msgid_to_translation)
+
+    # django.po should get the new translation
+    saved_dj = polib.pofile(str(dj_path))
+    assert saved_dj[0].msgstr == "último"
+
+    # djangojs.po must keep its original translation
+    saved_js = polib.pofile(str(js_path))
+    assert saved_js[0].msgstr == "última"
+
+
+def test_save_po_translations_overwrites_when_requested(tmp_path):
+    """With overwrite=True, existing translations should be replaced."""
+
+    lc = tmp_path / "nl" / "LC_MESSAGES"
+    lc.mkdir(parents=True)
+
+    po_js = polib.POFile()
+    po_js.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    po_js.append(polib.POEntry(msgid="last", msgstr="última"))
+    js_path = lc / "djangojs.po"
+    po_js.save(str(js_path))
+
+    msgid_to_translation = {"last": "último"}
+
+    Command._save_po_translations([js_path], msgid_to_translation, overwrite=True)
+
+    saved_js = polib.pofile(str(js_path))
+    assert saved_js[0].msgstr == "último"
+
+
+def test_save_po_translations_replaces_fuzzy(tmp_path):
+    """Fuzzy translations should always be replaced, even without overwrite."""
+
+    lc = tmp_path / "nl" / "LC_MESSAGES"
+    lc.mkdir(parents=True)
+
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    entry = polib.POEntry(msgid="last", msgstr="antigua")
+    entry.flags.append("fuzzy")
+    po.append(entry)
+    po_path = lc / "django.po"
+    po.save(str(po_path))
+
+    Command._save_po_translations([po_path], {"last": "último"})
+
+    saved = polib.pofile(str(po_path))
+    assert saved[0].msgstr == "último"
+    assert "fuzzy" not in saved[0].flags
+
+
+def test_save_po_translations_preserves_existing_plural(tmp_path):
+    """Existing non-fuzzy plural translations must not be overwritten."""
+
+    lc = tmp_path / "nl" / "LC_MESSAGES"
+    lc.mkdir(parents=True)
+
+    po = polib.POFile()
+    po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    entry = polib.POEntry(
+        msgid="%(count)s item",
+        msgid_plural="%(count)s items",
+        msgstr_plural={0: "%(count)s objeto", 1: "%(count)s objetos"},
+    )
+    po.append(entry)
+    po_path = lc / "django.po"
+    po.save(str(po_path))
+
+    translations = {
+        "%(count)s item": "%(count)s elemento",
+        "%(count)s items": "%(count)s elementos",
+    }
+    Command._save_po_translations([po_path], translations)
+
+    saved = polib.pofile(str(po_path))
+    assert saved[0].msgstr_plural[0] == "%(count)s objeto"
+    assert saved[0].msgstr_plural[1] == "%(count)s objetos"
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_existing_translation_not_replaced_across_po_files(
+    tmp_path, settings, mocker, mock_completion
+):
+    """Regression: translating an empty msgid in django.po must not overwrite
+    the same msgid already translated in djangojs.po.
+
+    Bug scenario: "last" is untranslated in django.po but already translated
+    as "última" in djangojs.po. The LLM returns "último". After the command
+    runs, djangojs.po must still contain "última".
+    """
+    locale_dir = tmp_path / "locale"
+    nl_dir = locale_dir / "nl" / "LC_MESSAGES"
+    nl_dir.mkdir(parents=True)
+
+    # djangojs.po: "last" already translated as "última"
+    js_po = polib.POFile()
+    js_po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    js_po.append(polib.POEntry(msgid="last", msgstr="última"))
+    js_po.save(str(nl_dir / "djangojs.po"))
+
+    # django.po: "last" untranslated
+    dj_po = polib.POFile()
+    dj_po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+    dj_po.append(polib.POEntry(msgid="last", msgstr=""))
+    dj_po.save(str(nl_dir / "django.po"))
+
+    settings.LOCALE_PATHS = [str(locale_dir)]
+    mocker.patch("django.apps.apps.get_app_configs", return_value=[])
+
+    # LLM always returns "último"
+    mock_completion("último")
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    # django.po should get the new translation
+    saved_dj = polib.pofile(str(nl_dir / "django.po"))
+    assert saved_dj[0].msgstr == "último"
+
+    # djangojs.po must keep its original translation
+    saved_js = polib.pofile(str(nl_dir / "djangojs.po"))
+    assert saved_js[0].msgstr == "última"

@@ -549,7 +549,7 @@ class Command(BaseCommand):
             self.stdout.write("=" * 60)
 
     @staticmethod
-    def _save_po_translations(po_paths, msgid_to_translation):
+    def _save_po_translations(po_paths, msgid_to_translation, overwrite=False):
         """Write current translations to PO files on disk.
 
         Called after each successful batch so that translations are persisted
@@ -562,6 +562,14 @@ class Command(BaseCommand):
             for entry in po:
                 if entry.msgid not in msgid_to_translation:
                     continue
+                # Never replace existing non-fuzzy translations unless
+                # the user explicitly requested --overwrite.
+                if not overwrite and not entry.fuzzy:
+                    if entry.msgid_plural:
+                        if entry.msgstr_plural and all(entry.msgstr_plural.values()):
+                            continue
+                    elif entry.msgstr:
+                        continue
                 if entry.msgid_plural:
                     singular = msgid_to_translation[entry.msgid]
                     plural = msgid_to_translation.get(entry.msgid_plural, singular)
@@ -652,7 +660,11 @@ class Command(BaseCommand):
 
                         # Save PO files after each batch so translations
                         # aren't lost if a later batch fails
-                        self._save_po_translations(group_po_paths, msgid_to_translation)
+                        self._save_po_translations(
+                            group_po_paths,
+                            msgid_to_translation,
+                            overwrite=overwrite,
+                        )
                         self.stdout.write(f"  💾 Saved batch {batch_num}/{len(groups)}")
 
         # Early return with minimal output if nothing to translate
