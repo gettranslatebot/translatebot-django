@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-04-12
+
+### Added
+
+- `translate()` now returns a `TranslateResult` dataclass with statistics: `strings_found`, `strings_translated`, `po_files`, `model_fields_found`, `model_fields_translated`, `target_langs`, and `dry_run`
+
+### Changed
+
+- Updated deepl
+- Updated django from 5.2.12 to 5.2.13
+- Updated litellm
+- Updated pytest
+- Updated ruff
+
+### Infrastructure
+
+- Added `contents: read` permission to lint CI job
+
 ## [1.1.1] - 2026-04-06
 
 ### Fixed
@@ -383,6 +401,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[1.2.0]: https://github.com/gettranslatebot/translatebot-django/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/gettranslatebot/translatebot-django/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/gettranslatebot/translatebot-django/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/gettranslatebot/translatebot-django/compare/v1.0.0...v1.0.1
