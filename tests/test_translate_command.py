@@ -3090,3 +3090,77 @@ def test_existing_translation_not_replaced_across_po_files(
     # djangojs.po must keep its original translation
     saved_js = polib.pofile(str(nl_dir / "djangojs.po"))
     assert saved_js[0].msgstr == "última"
+
+
+# ── _translate_stats contract tests ──────────────────────────────
+
+
+def test_handle_sets_translate_stats(
+    sample_po_file, mock_env_api_key, mock_completion, mock_model_config
+):
+    """handle() populates _translate_stats with correct PO file stats."""
+    mock_completion()
+
+    cmd = Command(stdout=StringIO(), stderr=StringIO())
+    call_command(cmd, target_lang="nl")
+
+    stats = cmd._translate_stats
+    assert stats["strings_found"] == 2  # sample_po_file has 2 untranslated
+    assert stats["strings_translated"] == 2
+    assert stats["po_files"] == 1
+    assert stats["model_fields_found"] == 0
+    assert stats["model_fields_translated"] == 0
+    assert stats["target_langs"] == ["nl"]
+
+
+def test_handle_sets_translate_stats_nothing_to_translate(
+    sample_po_file, mock_env_api_key, mock_model_config
+):
+    """_translate_stats reports zero strings when everything is up to date."""
+    # Translate first so everything is up to date
+    # (dry_run leaves entries empty, so use a pre-translated file instead)
+    import polib as _polib
+
+    po = _polib.pofile(str(sample_po_file))
+    for entry in po:
+        if not entry.msgstr:
+            entry.msgstr = "vertaald"
+    po.save(str(sample_po_file))
+
+    cmd = Command(stdout=StringIO(), stderr=StringIO())
+    call_command(cmd, target_lang="nl")
+
+    stats = cmd._translate_stats
+    assert stats["strings_found"] == 0
+    assert stats["strings_translated"] == 0
+    assert stats["po_files"] == 1
+
+
+def test_handle_stats_accumulate_across_languages(
+    tmp_path, settings, mocker, mock_env_api_key, mock_model_config, mock_completion
+):
+    """Stats are summed across multiple target languages."""
+    mock_completion()
+
+    # Create PO files for two languages, each with 1 untranslated entry
+    for lang in ("nl", "de"):
+        lang_dir = tmp_path / "locale" / lang / "LC_MESSAGES"
+        lang_dir.mkdir(parents=True)
+        po = polib.POFile()
+        po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
+        po.append(polib.POEntry(msgid="Hello", msgstr=""))
+        po.save(str(lang_dir / "django.po"))
+
+    settings.LOCALE_PATHS = [str(tmp_path / "locale")]
+    mocker.patch("django.apps.apps.get_app_configs", return_value=[])
+
+    cmd = Command(stdout=StringIO(), stderr=StringIO())
+    call_command(cmd, target_lang=["nl", "de"])
+
+    stats = cmd._translate_stats
+    # 1 string per language × 2 languages = 2 total
+    assert stats["strings_found"] == 2
+    assert stats["strings_translated"] == 2
+    # 1 PO file per language × 2 languages = 2 total
+    assert stats["po_files"] == 2
+    assert stats["target_langs"] == ["nl", "de"]

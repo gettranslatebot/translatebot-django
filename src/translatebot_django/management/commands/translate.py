@@ -509,6 +509,13 @@ class Command(BaseCommand):
                     )
                 )
 
+        # Aggregate statistics across all languages
+        total_strings_found = 0
+        total_strings_translated = 0
+        total_po_files = 0
+        total_model_fields_found = 0
+        total_model_fields_translated = 0
+
         # Process each target language
         for lang in target_langs:
             if len(target_langs) > 1:
@@ -518,7 +525,7 @@ class Command(BaseCommand):
 
             # Handle .po file translation (existing logic)
             if translate_po:
-                self._translate_po_files(
+                po_stats = self._translate_po_files(
                     lang,
                     dry_run,
                     overwrite,
@@ -526,10 +533,13 @@ class Command(BaseCommand):
                     context,
                     app_labels=app_labels,
                 )
+                total_strings_found += po_stats["strings_found"]
+                total_strings_translated += po_stats["strings_translated"]
+                total_po_files += po_stats["po_files"]
 
             # Handle model field translation (NEW)
             if translate_models:
-                self._translate_model_fields(
+                model_stats = self._translate_model_fields(
                     target_lang=lang,
                     dry_run=dry_run,
                     overwrite=overwrite,
@@ -537,6 +547,8 @@ class Command(BaseCommand):
                     model_names=models_arg,
                     context=context,
                 )
+                total_model_fields_found += model_stats["model_fields_found"]
+                total_model_fields_translated += model_stats["model_fields_translated"]
 
         if len(target_langs) > 1:
             self.stdout.write("\n" + "=" * 60)
@@ -547,6 +559,16 @@ class Command(BaseCommand):
                 )
             )
             self.stdout.write("=" * 60)
+
+        # Read by api.translate() to build TranslateResult — keep in sync.
+        self._translate_stats = {
+            "strings_found": total_strings_found,
+            "strings_translated": total_strings_translated,
+            "po_files": total_po_files,
+            "model_fields_found": total_model_fields_found,
+            "model_fields_translated": total_model_fields_translated,
+            "target_langs": target_langs,
+        }
 
     @staticmethod
     def _save_po_translations(po_paths, msgid_to_translation, overwrite=False):
@@ -593,7 +615,12 @@ class Command(BaseCommand):
         context=None,
         app_labels=None,
     ):
-        """Translate .po files (existing logic refactored into method)."""
+        """Translate .po files (existing logic refactored into method).
+
+        Returns:
+            dict with ``strings_found``, ``strings_translated``, and
+            ``po_files`` counts.
+        """
         # Find all .po files for the target language
         po_paths = get_all_po_paths(target_lang, app_labels=app_labels)
 
@@ -681,7 +708,11 @@ class Command(BaseCommand):
                         f"✨ Language '{target_lang}': Already up to date"
                     )
                 )
-            return
+            return {
+                "strings_found": 0,
+                "strings_translated": 0,
+                "po_files": len(po_paths),
+            }
 
         self.stdout.write(f"ℹ️  Found {total_msgids} untranslated entries")
 
@@ -734,6 +765,12 @@ class Command(BaseCommand):
                 )
             )
 
+        return {
+            "strings_found": total_msgids,
+            "strings_translated": total_changed,
+            "po_files": len(po_paths),
+        }
+
     def _translate_model_fields(
         self,
         target_lang,
@@ -743,7 +780,12 @@ class Command(BaseCommand):
         model_names=None,
         context=None,
     ):
-        """Translate django-modeltranslation model fields."""
+        """Translate django-modeltranslation model fields.
+
+        Returns:
+            dict with ``model_fields_found`` and ``model_fields_translated``
+            counts.
+        """
         from translatebot_django.backends.modeltranslation import (
             ModeltranslationBackend,
         )
@@ -768,7 +810,7 @@ class Command(BaseCommand):
             self.stdout.write(
                 self.style.SUCCESS("✨ No untranslated model fields found")
             )
-            return
+            return {"model_fields_found": 0, "model_fields_translated": 0}
 
         self.stdout.write(f"ℹ️  Found {len(items)} model fields to translate")
 
@@ -852,3 +894,8 @@ class Command(BaseCommand):
                     f"✨ Successfully translated {updated} model field(s)"
                 )
             )
+
+        return {
+            "model_fields_found": len(items),
+            "model_fields_translated": updated,
+        }

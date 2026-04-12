@@ -320,3 +320,49 @@ def test_translate_command_models_saves_after_each_batch(
 
     # The first batch should have been saved before the second batch failed
     assert mock_backend.apply_translations.call_count == 1
+
+
+def test_translate_command_models_sets_stats(settings, mock_env_api_key, mocker):
+    """_translate_stats includes model field counts after --models translation."""
+    from translatebot_django.management.commands.translate import Command
+
+    settings.TRANSLATEBOT_MODEL = "gpt-4o-mini"
+
+    mock_backend_class = mocker.patch(
+        "translatebot_django.backends.modeltranslation.ModeltranslationBackend"
+    )
+    mock_backend = mocker.MagicMock()
+
+    fake_items = [
+        {
+            "model": Article,
+            "instance": mocker.MagicMock(),
+            "field": "title",
+            "target_field": "title_nl",
+            "source_text": "Hello World",
+        },
+        {
+            "model": Article,
+            "instance": mocker.MagicMock(),
+            "field": "content",
+            "target_field": "content_nl",
+            "source_text": "Some content",
+        },
+    ]
+    mock_backend.gather_translatable_content.return_value = fake_items
+    mock_backend.apply_translations.return_value = 2
+    mock_backend_class.return_value = mock_backend
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text",
+        return_value=["Hallo Wereld", "Wat inhoud"],
+    )
+
+    cmd = Command(stdout=StringIO(), stderr=StringIO())
+    call_command(cmd, target_lang="nl", models=[])
+
+    stats = cmd._translate_stats
+    assert stats["model_fields_found"] == 2
+    assert stats["model_fields_translated"] == 2
+    assert stats["strings_found"] == 0
+    assert stats["target_langs"] == ["nl"]
