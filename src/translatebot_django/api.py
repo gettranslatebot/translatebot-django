@@ -1,4 +1,35 @@
+import dataclasses
+
 from django.core.management import call_command
+
+from translatebot_django.management.commands.translate import (
+    Command as TranslateCommand,
+)
+
+
+@dataclasses.dataclass
+class TranslateResult:
+    """Statistics returned by :func:`translate`.
+
+    Attributes:
+        strings_found: Number of translatable strings found in PO files.
+        strings_translated: Number of PO strings that were translated
+            (or would be translated in dry-run mode).
+        po_files: Number of PO files processed.
+        model_fields_found: Number of translatable model fields found.
+        model_fields_translated: Number of model fields that were translated
+            (or would be translated in dry-run mode).
+        target_langs: Language codes that were translated to.
+        dry_run: Whether the translation was a dry run.
+    """
+
+    strings_found: int = 0
+    strings_translated: int = 0
+    po_files: int = 0
+    model_fields_found: int = 0
+    model_fields_translated: int = 0
+    target_langs: list[str] = dataclasses.field(default_factory=list)
+    dry_run: bool = False
 
 
 def translate(
@@ -34,6 +65,11 @@ def translate(
             - A list of model names (e.g. ``["Article", "Product"]``):
               translate only those models.
 
+    Returns:
+        TranslateResult: Statistics about what was translated, including
+        counts of strings found, translated, PO files processed, and
+        model fields handled.
+
     Raises:
         ValueError: If *apps* and *models* are both provided, or if *models*
             is not ``True``, a list, or ``None``.
@@ -45,19 +81,22 @@ def translate(
         from translatebot_django import translate
 
         # Translate PO files to all configured languages
-        translate()
+        result = translate()
+        print(f"Translated {result.strings_translated} strings")
 
         # Translate to specific languages
-        translate(target_langs=["nl", "de"])
+        result = translate(target_langs=["nl", "de"])
 
         # Translate model fields
-        translate(models=True)
+        result = translate(models=True)
+        print(f"Updated {result.model_fields_translated} model fields")
 
         # Translate specific models for one language
         translate(target_langs="fr", models=["Article", "Product"])
 
         # Preview changes
-        translate(dry_run=True)
+        result = translate(dry_run=True)
+        print(f"Would translate {result.strings_found} strings")
 
         # Use in a Celery task
         from celery import shared_task
@@ -98,4 +137,15 @@ def translate(
                 f"Got {type(models).__name__}."
             )
 
-    call_command("translate", **kwargs)
+    cmd = TranslateCommand()
+    call_command(cmd, **kwargs)
+    stats = getattr(cmd, "_translate_stats", {})
+    return TranslateResult(
+        strings_found=stats.get("strings_found", 0),
+        strings_translated=stats.get("strings_translated", 0),
+        po_files=stats.get("po_files", 0),
+        model_fields_found=stats.get("model_fields_found", 0),
+        model_fields_translated=stats.get("model_fields_translated", 0),
+        target_langs=stats.get("target_langs", []),
+        dry_run=dry_run,
+    )
