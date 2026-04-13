@@ -412,6 +412,14 @@ class Command(BaseCommand):
             "Can be used multiple times to include multiple apps.",
         )
 
+        parser.add_argument(
+            "--llm-model",
+            default=None,
+            help="LLM model name to use for this run, overriding TRANSLATEBOT_MODEL "
+            "(e.g. 'gpt-4o', 'claude-3-5-sonnet-20241022'). "
+            "Not supported with the DeepL provider — raises an error if passed.",
+        )
+
         # Only add modeltranslation-related arguments if it's available
         if is_modeltranslation_available():
             parser.add_argument(
@@ -490,7 +498,8 @@ class Command(BaseCommand):
             )
 
         api_key = get_api_key()
-        provider = get_provider(api_key)
+        llm_model = options.get("llm_model")
+        provider = get_provider(api_key, model=llm_model)
 
         # Load translation context from TRANSLATING.md if available
         context = get_translation_context()

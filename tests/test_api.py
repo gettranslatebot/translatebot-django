@@ -176,6 +176,25 @@ def test_translate_returns_stats_from_command(sample_po_file, mock_env_api_key):
         assert result.dry_run is False
 
 
+def test_translate_model_forwarded(sample_po_file, mock_env_api_key):
+    """model= is forwarded to the command as llm_model."""
+    with patch("translatebot_django.api.call_command") as mock_call:
+        translate(target_langs="nl", model="gpt-4o", dry_run=True)
+        assert _get_call_kwargs(mock_call) == {
+            "dry_run": True,
+            "overwrite": False,
+            "target_lang": ["nl"],
+            "llm_model": "gpt-4o",
+        }
+
+
+def test_translate_model_none_omitted(sample_po_file, mock_env_api_key):
+    """When model is not passed, llm_model is not included in kwargs."""
+    with patch("translatebot_django.api.call_command") as mock_call:
+        translate(target_langs="nl", dry_run=True)
+        assert "llm_model" not in _get_call_kwargs(mock_call)
+
+
 def test_translate_end_to_end_dry_run(
     sample_po_file, mock_env_api_key, mock_model_config
 ):

@@ -15,6 +15,7 @@ from translatebot_django.management.commands.translate import (
     TranslationValidationError,
     translate_text,
 )
+from translatebot_django.providers.litellm import LiteLLMProvider
 from translatebot_django.utils import (
     combine_translation_contexts,
     get_all_po_paths,
@@ -3164,3 +3165,25 @@ def test_handle_stats_accumulate_across_languages(
     # 1 PO file per language × 2 languages = 2 total
     assert stats["po_files"] == 2
     assert stats["target_langs"] == ["nl", "de"]
+
+
+@pytest.mark.usefixtures("sample_po_file", "mock_env_api_key")
+def test_llm_model_flag_reaches_provider(settings, mocker):
+    """--llm-model / llm_model= overrides the model used to construct the provider."""
+    settings.TRANSLATEBOT_MODEL = "gpt-4o-mini"
+
+    mock_provider = mocker.MagicMock(spec=LiteLLMProvider)
+    mock_provider.name = "gpt-4o"
+    mock_provider.supports_context = False
+    mock_provider.batch.return_value = []
+
+    mock_get_provider = mocker.patch(
+        "translatebot_django.management.commands.translate.get_provider",
+        return_value=mock_provider,
+    )
+
+    call_command("translate", target_lang="nl", dry_run=True, llm_model="gpt-4o")
+
+    mock_get_provider.assert_called_once()
+    _, kwargs = mock_get_provider.call_args
+    assert kwargs.get("model") == "gpt-4o"

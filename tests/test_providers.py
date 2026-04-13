@@ -1,11 +1,22 @@
 """Tests for translation providers."""
 
+import builtins
 import sys
 from unittest.mock import MagicMock
 
+import deepl
 import pytest
 
 from django.core.management.base import CommandError
+
+from translatebot_django.providers import get_provider
+from translatebot_django.providers.deepl import (
+    DeepLProvider,
+    _replace_placeholders_with_emails,
+    _restore_email_placeholders,
+    django_to_deepl_target,
+)
+from translatebot_django.providers.litellm import LiteLLMProvider
 
 # --- Factory tests ---
 
@@ -17,9 +28,6 @@ def test_get_provider_default_is_litellm(settings, monkeypatch):
         delattr(settings, "TRANSLATEBOT_PROVIDER")
     settings.TRANSLATEBOT_MODEL = "gpt-4o-mini"
 
-    from translatebot_django.providers import get_provider
-    from translatebot_django.providers.litellm import LiteLLMProvider
-
     provider = get_provider("test-key")
     assert isinstance(provider, LiteLLMProvider)
 
@@ -29,9 +37,6 @@ def test_get_provider_explicit_litellm(settings):
     settings.TRANSLATEBOT_PROVIDER = "litellm"
     settings.TRANSLATEBOT_MODEL = "gpt-4o-mini"
 
-    from translatebot_django.providers import get_provider
-    from translatebot_django.providers.litellm import LiteLLMProvider
-
     provider = get_provider("test-key")
     assert isinstance(provider, LiteLLMProvider)
 
@@ -39,9 +44,6 @@ def test_get_provider_explicit_litellm(settings):
 def test_get_provider_deepl(settings):
     """DeepL setting returns DeepLProvider."""
     settings.TRANSLATEBOT_PROVIDER = "deepl"
-
-    from translatebot_django.providers import get_provider
-    from translatebot_django.providers.deepl import DeepLProvider
 
     provider = get_provider("test-key")
     assert isinstance(provider, DeepLProvider)
@@ -51,10 +53,26 @@ def test_get_provider_unknown_raises_error(settings):
     """Unknown provider name raises CommandError."""
     settings.TRANSLATEBOT_PROVIDER = "unknown_provider"
 
-    from translatebot_django.providers import get_provider
-
     with pytest.raises(CommandError, match="Unknown translation provider"):
         get_provider("test-key")
+
+
+def test_get_provider_model_override(settings):
+    """Passing model= to get_provider() uses it instead of TRANSLATEBOT_MODEL."""
+    settings.TRANSLATEBOT_PROVIDER = "litellm"
+    settings.TRANSLATEBOT_MODEL = "gpt-4o-mini"
+
+    provider = get_provider("test-key", model="claude-3-5-sonnet-20241022")
+    assert isinstance(provider, LiteLLMProvider)
+    assert provider.name == "claude-3-5-sonnet-20241022"
+
+
+def test_get_provider_model_deepl_raises_error(settings):
+    """Passing model= when using DeepL raises CommandError."""
+    settings.TRANSLATEBOT_PROVIDER = "deepl"
+
+    with pytest.raises(CommandError, match="not supported for the DeepL provider"):
+        get_provider("test-key", model="gpt-4o")
 
 
 # --- LiteLLM provider property tests ---
@@ -64,16 +82,12 @@ def test_litellm_provider_name(settings):
     """LiteLLMProvider.name returns the model name."""
     settings.TRANSLATEBOT_MODEL = "claude-3-sonnet"
 
-    from translatebot_django.providers.litellm import LiteLLMProvider
-
     provider = LiteLLMProvider(model="claude-3-sonnet", api_key="test-key")
     assert provider.name == "claude-3-sonnet"
 
 
 def test_litellm_provider_supports_context():
     """LiteLLMProvider supports TRANSLATING.md context."""
-    from translatebot_django.providers.litellm import LiteLLMProvider
-
     provider = LiteLLMProvider(model="gpt-4o-mini", api_key="test-key")
     assert provider.supports_context is True
 
@@ -83,16 +97,12 @@ def test_litellm_provider_supports_context():
 
 def test_deepl_provider_name():
     """DeepLProvider.name returns 'DeepL'."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
     assert provider.name == "DeepL"
 
 
 def test_deepl_provider_supports_context():
     """DeepLProvider does not support TRANSLATING.md context."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
     assert provider.supports_context is False
 
@@ -102,8 +112,6 @@ def test_deepl_provider_supports_context():
 
 def test_deepl_lang_mapping_simple():
     """Simple language codes are uppercased."""
-    from translatebot_django.providers.deepl import django_to_deepl_target
-
     assert django_to_deepl_target("de") == "DE"
     assert django_to_deepl_target("fr") == "FR"
     assert django_to_deepl_target("nl") == "NL"
@@ -112,22 +120,16 @@ def test_deepl_lang_mapping_simple():
 
 def test_deepl_lang_mapping_english_default():
     """'en' maps to 'EN-US' (DeepL requires a regional variant)."""
-    from translatebot_django.providers.deepl import django_to_deepl_target
-
     assert django_to_deepl_target("en") == "EN-US"
 
 
 def test_deepl_lang_mapping_portuguese_default():
     """'pt' maps to 'PT-BR' (DeepL requires a regional variant)."""
-    from translatebot_django.providers.deepl import django_to_deepl_target
-
     assert django_to_deepl_target("pt") == "PT-BR"
 
 
 def test_deepl_lang_mapping_regional_variant():
     """Regional variants like 'pt-br' are uppercased as-is."""
-    from translatebot_django.providers.deepl import django_to_deepl_target
-
     assert django_to_deepl_target("pt-br") == "PT-BR"
     assert django_to_deepl_target("zh-hans") == "ZH-HANS"
     assert django_to_deepl_target("en-gb") == "EN-GB"
@@ -138,8 +140,6 @@ def test_deepl_lang_mapping_regional_variant():
 
 def test_deepl_batch_under_limit():
     """Texts under both limits stay in a single batch."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
     texts = ["Hello", "World", "Test"]
     batches = provider.batch(texts, "de")
@@ -148,8 +148,6 @@ def test_deepl_batch_under_limit():
 
 def test_deepl_batch_over_50_texts():
     """More than 50 texts are split into multiple batches."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
     texts = [f"String {i}" for i in range(120)]
     batches = provider.batch(texts, "de")
@@ -166,8 +164,6 @@ def test_deepl_batch_over_50_texts():
 
 def test_deepl_batch_large_texts():
     """Texts exceeding 128KB are split by size."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
     # Each text is ~10KB, so 128KB limit fits ~12 texts
     large_text = "A" * 10_000
@@ -183,8 +179,6 @@ def test_deepl_batch_large_texts():
 
 def test_deepl_batch_empty():
     """Empty input returns empty list."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
     batches = provider.batch([], "de")
     assert batches == []
@@ -192,8 +186,6 @@ def test_deepl_batch_empty():
 
 def test_deepl_batch_single_oversized_text():
     """A single text larger than 128KB goes into its own batch."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
     huge_text = "B" * (200 * 1024)  # 200KB
     texts = ["small", huge_text, "also small"]
@@ -211,8 +203,6 @@ def test_deepl_batch_single_oversized_text():
 
 def test_deepl_translate_basic(mocker):
     """DeepLProvider.translate returns translated texts."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
 
     mock_result_1 = MagicMock()
@@ -237,8 +227,6 @@ def test_deepl_translate_basic(mocker):
 
 def test_deepl_translate_strips_trailing_dot():
     """Strip trailing dot added by DeepL when source has none."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
 
     sources = ["Hello", "World", "Done.", ".", "OK", ""]
@@ -265,8 +253,6 @@ def test_deepl_translate_strips_trailing_dot():
 
 def test_deepl_translate_uses_mapped_lang(mocker):
     """DeepLProvider.translate converts language codes for the API."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
 
     mock_result = MagicMock()
@@ -289,10 +275,6 @@ def test_deepl_translate_uses_mapped_lang(mocker):
 
 def test_deepl_translate_auth_error():
     """DeepL auth error raises CommandError."""
-    import deepl
-
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="bad-key")
     provider._translator.translate_text = MagicMock(
         side_effect=deepl.AuthorizationException("Invalid auth key")
@@ -304,10 +286,6 @@ def test_deepl_translate_auth_error():
 
 def test_deepl_translate_quota_error():
     """DeepL quota error raises CommandError."""
-    import deepl
-
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
     provider._translator.translate_text = MagicMock(
         side_effect=deepl.QuotaExceededException("Quota exceeded")
@@ -319,10 +297,6 @@ def test_deepl_translate_quota_error():
 
 def test_deepl_translate_rate_limit_error():
     """DeepL rate limit error raises CommandError."""
-    import deepl
-
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
     provider._translator.translate_text = MagicMock(
         side_effect=deepl.TooManyRequestsException("Too many requests")
@@ -334,10 +308,6 @@ def test_deepl_translate_rate_limit_error():
 
 def test_deepl_translate_generic_error():
     """Generic DeepL API error raises CommandError."""
-    import deepl
-
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
     provider._translator.translate_text = MagicMock(
         side_effect=deepl.DeepLException("Something went wrong")
@@ -352,8 +322,6 @@ def test_deepl_translate_generic_error():
 
 def test_deepl_translate_protects_placeholders():
     """Placeholders are replaced with email tokens before sending and restored after."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
 
     mock_result = MagicMock()
@@ -375,8 +343,6 @@ def test_deepl_translate_protects_placeholders():
 
 def test_deepl_translate_preserves_html_with_placeholders():
     """HTML tags in source text are preserved through translation (regression test)."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
 
     source = 'Click <a href="/shop">%(name)s</a> & visit <b>us</b>'
@@ -401,8 +367,6 @@ def test_deepl_translate_preserves_html_with_placeholders():
 
 def test_deepl_translate_no_placeholders_unchanged():
     """Texts without placeholders pass through normally."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
 
     mock_result = MagicMock()
@@ -441,8 +405,6 @@ def test_deepl_translate_no_placeholders_unchanged():
 )
 def test_replace_placeholders_with_emails(text, expected_replaced, expected_originals):
     """_replace_placeholders_with_emails swaps placeholders for email tokens."""
-    from translatebot_django.providers.deepl import _replace_placeholders_with_emails
-
     replaced, originals = _replace_placeholders_with_emails(text)
     assert replaced == expected_replaced
     assert originals == expected_originals
@@ -465,8 +427,6 @@ def test_replace_placeholders_with_emails(text, expected_replaced, expected_orig
 )
 def test_restore_email_placeholders(text, originals, expected):
     """_restore_email_placeholders swaps email tokens back to originals."""
-    from translatebot_django.providers.deepl import _restore_email_placeholders
-
     assert _restore_email_placeholders(text, originals) == expected
 
 
@@ -475,8 +435,6 @@ def test_restore_email_placeholders(text, originals, expected):
 )
 def test_deepl_translate_uses_email_placeholders(lang):
     """All languages use email-shaped placeholders and tag_handling=html."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
 
     mock_result = MagicMock()
@@ -498,8 +456,6 @@ def test_deepl_translate_uses_email_placeholders(lang):
 
 def test_deepl_translate_unescapes_html_entities():
     """html.unescape() decodes entities produced by tag_handling=html."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
 
     mock_result = MagicMock()
@@ -514,8 +470,6 @@ def test_deepl_translate_unescapes_html_entities():
 
 def test_deepl_translate_preserves_source_entities():
     """Source text with HTML entities is NOT unescaped (entities are intentional)."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
 
     mock_result = MagicMock()
@@ -532,8 +486,6 @@ def test_deepl_translate_preserves_source_entities():
 
 def test_deepl_translate_mixed_batch_entities():
     """Batch with plain text and HTML content handles each correctly."""
-    from translatebot_django.providers.deepl import DeepLProvider
-
     provider = DeepLProvider(api_key="test-key")
 
     mock_r1 = MagicMock()
@@ -560,8 +512,6 @@ def test_deepl_import_guard_raises_error(monkeypatch):
     original = sys.modules.pop("deepl", None)
     # Also remove our provider module so it re-imports
     sys.modules.pop("translatebot_django.providers.deepl", None)
-
-    import builtins
 
     original_import = builtins.__import__
 
