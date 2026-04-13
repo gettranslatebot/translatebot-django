@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-04-13
+
+### Added
+
+- Runtime LLM model override: pass `model="gpt-4o"` to `translate()` or `--llm-model gpt-4o` to the `translate` management command to override `settings.TRANSLATEBOT_MODEL` for a single call. Useful for A/B testing models or running higher-quality translations on specific languages without mutating Django settings.
+- Raises `CommandError` when the `model` parameter is passed together with the DeepL provider, since DeepL has no model concept.
+
 ## [1.2.0] - 2026-04-12
 
 ### Added
