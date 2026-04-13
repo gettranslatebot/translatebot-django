@@ -57,6 +57,29 @@ def test_get_provider_unknown_raises_error(settings):
         get_provider("test-key")
 
 
+def test_get_provider_model_override(settings):
+    """Passing model= to get_provider() uses it instead of TRANSLATEBOT_MODEL."""
+    settings.TRANSLATEBOT_PROVIDER = "litellm"
+    settings.TRANSLATEBOT_MODEL = "gpt-4o-mini"
+
+    from translatebot_django.providers import get_provider
+    from translatebot_django.providers.litellm import LiteLLMProvider
+
+    provider = get_provider("test-key", model="claude-3-5-sonnet-20241022")
+    assert isinstance(provider, LiteLLMProvider)
+    assert provider.name == "claude-3-5-sonnet-20241022"
+
+
+def test_get_provider_model_deepl_raises_error(settings):
+    """Passing model= when using DeepL raises CommandError."""
+    settings.TRANSLATEBOT_PROVIDER = "deepl"
+
+    from translatebot_django.providers import get_provider
+
+    with pytest.raises(CommandError, match="not supported for the DeepL provider"):
+        get_provider("test-key", model="gpt-4o")
+
+
 # --- LiteLLM provider property tests ---
 
 

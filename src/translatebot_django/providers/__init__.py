@@ -45,13 +45,17 @@ class TranslationProvider(ABC):
         """Whether this provider can use TRANSLATING.md context."""
 
 
-def get_provider(api_key):
+def get_provider(api_key, model=None):
     """Create a translation provider based on Django settings.
 
     Reads TRANSLATEBOT_PROVIDER from settings. Defaults to 'litellm' if not set.
 
     Args:
         api_key: API key for the provider.
+        model: Optional LLM model name to use instead of the value from
+            ``settings.TRANSLATEBOT_MODEL``. Ignored for providers that do not
+            use a model (e.g. DeepL — passing a model for DeepL raises an
+            error).
 
     Returns:
         A TranslationProvider instance.
@@ -71,10 +75,15 @@ def get_provider(api_key):
         from translatebot_django.providers.litellm import LiteLLMProvider
         from translatebot_django.utils import get_model
 
-        model = get_model()
-        return LiteLLMProvider(model=model, api_key=api_key)
+        effective_model = model if model is not None else get_model()
+        return LiteLLMProvider(model=effective_model, api_key=api_key)
 
     if provider_name == "deepl":
+        if model is not None:
+            raise CommandError(
+                "The 'model' parameter is not supported for the DeepL provider. "
+                "DeepL does not use a language model."
+            )
         from translatebot_django.providers.deepl import DeepLProvider
 
         return DeepLProvider(api_key=api_key)

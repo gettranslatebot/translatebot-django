@@ -39,6 +39,7 @@ def translate(
     overwrite=False,
     apps=None,
     models=None,
+    model=None,
 ):
     """Translate PO files and/or model fields programmatically.
 
@@ -58,6 +59,11 @@ def translate(
         apps: App label or list of app labels to restrict PO file translation
             to (e.g. ``"blog"`` or ``["blog", "shop"]``). Cannot be combined
             with *models*.
+        model: LLM model name to use for this call, overriding
+            ``settings.TRANSLATEBOT_MODEL`` (e.g. ``"gpt-4o"`` or
+            ``"claude-3-5-sonnet-20241022"``). Has no effect when using the
+            DeepL provider — passing it with DeepL raises a
+            :exc:`~django.core.management.base.CommandError`.
         models: Controls model field translation via django-modeltranslation.
 
             - ``None`` (default): translate PO files only.
@@ -115,6 +121,9 @@ def translate(
         "dry_run": dry_run,
         "overwrite": overwrite,
     }
+
+    if model is not None:
+        kwargs["llm_model"] = model
 
     if target_langs is not None:
         if isinstance(target_langs, str):
