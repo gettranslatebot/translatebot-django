@@ -53,14 +53,14 @@ dev = [
   "pytest-mock>=3.10.0",
   "pytest-cov>=4.0.0",
   "ruff>=0.8.0",
-  "django-modeltranslation>=0.18",
+  "django-modeltranslation<1,>=0.18",
   "deepl<2,>=1.0.0",
 ]
 deepl = [
   "deepl<2,>=1.0.0,<2",
 ]
 modeltranslation = [
-  "django-modeltranslation>=0.18,<1",
+  "django-modeltranslation<1,>=0.18,<1",
 ]
 
 [tool.setuptools]
