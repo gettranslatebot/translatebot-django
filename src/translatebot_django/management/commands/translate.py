@@ -291,14 +291,16 @@ def translate_text(text, target_lang, model, api_key, context=None, comments=Non
 
 
 # Practical output-token ceiling per batch, regardless of the model's
-# advertised max_output_tokens. Research and user reports consistently
-# show structured-output quality degrades well before the advertised
-# cap (e.g. 16K on gpt-4o-mini, 128K on gpt-5-mini). Keeping batches
-# under this ceiling improves reliability for JSON translation.
+# advertised max_output_tokens. Structured-output quality degrades well
+# before the advertised cap on most models, so keeping batches under
+# this ceiling improves reliability for JSON translation.
 # See issue #156.
 PRACTICAL_OUTPUT_BUDGET = 8000
 
-# Conservative defaults when litellm doesn't recognize a model.
+# Conservative defaults when litellm doesn't recognize a model. The output
+# fallback intentionally stays below PRACTICAL_OUTPUT_BUDGET so unknown
+# models batch extra-cautiously; raising it above the practical budget
+# would have no effect (the min() cap below would still win).
 _FALLBACK_INPUT_TOKENS = 8192
 _FALLBACK_OUTPUT_TOKENS = 4096
 
@@ -309,13 +311,37 @@ def _get_model_limits(model):
     The output value is capped at :data:`PRACTICAL_OUTPUT_BUDGET` so batches
     stay in the reliable zone for structured output, even when the model
     advertises a much larger capacity.
+
+    When litellm does not recognize the model, or when looking up its info
+    raises any error, returns conservative fallbacks
+    (:data:`_FALLBACK_INPUT_TOKENS` / :data:`_FALLBACK_OUTPUT_TOKENS`) and
+    emits a warning. Users seeing unexpectedly small batches should verify
+    the model name is correct and recognized by litellm.
     """
     _require_litellm()
     try:
         info = get_model_info(model)
-        max_input = info.get("max_input_tokens") or _FALLBACK_INPUT_TOKENS
-        max_output = info.get("max_output_tokens") or _FALLBACK_OUTPUT_TOKENS
-    except Exception:
+        max_input = info.get("max_input_tokens")
+        if max_input is None:
+            max_input = _FALLBACK_INPUT_TOKENS
+        max_output = info.get("max_output_tokens")
+        if max_output is None:
+            max_output = _FALLBACK_OUTPUT_TOKENS
+    except Exception as exc:
+        # litellm raises a bare Exception for unknown models, so we can't
+        # narrow the catch. Surface the failure via the logger so users
+        # notice when a typo in the model name is silently shrinking their
+        # batches.
+        logger.warning(
+            "Could not look up token limits for model %r (%s). "
+            "Falling back to conservative defaults "
+            "(max_input=%d, max_output=%d). "
+            "Verify that the model name is correct.",
+            model,
+            exc,
+            _FALLBACK_INPUT_TOKENS,
+            _FALLBACK_OUTPUT_TOKENS,
+        )
         max_input = _FALLBACK_INPUT_TOKENS
         max_output = _FALLBACK_OUTPUT_TOKENS
 
@@ -348,9 +374,7 @@ def batch_by_tokens(texts, target_lang, model, comments=None):
         group_candidate += [item]
 
         input_payload = _build_input_payload(group_candidate, comments)
-        input_tokens = get_token_count(
-            json.dumps(input_payload, ensure_ascii=False)
-        )
+        input_tokens = get_token_count(json.dumps(input_payload, ensure_ascii=False))
         preamble_tokens = get_token_count(
             create_preamble(target_lang, len(group_candidate))
         )
