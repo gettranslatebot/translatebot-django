@@ -204,10 +204,10 @@ def test_translate_command_models_batching(settings, mock_env_api_key, mocker):
         ],
     )
 
-    # Mock get_max_tokens to force batching with a low limit
+    # Mock model limits to force batching with low budgets
     mocker.patch(
-        "translatebot_django.management.commands.translate.get_max_tokens",
-        return_value=1000,  # Low limit to force batching
+        "translatebot_django.management.commands.translate._get_model_limits",
+        return_value=(1000, 1000),
     )
 
     out = StringIO()
@@ -309,10 +309,10 @@ def test_translate_command_models_saves_after_each_batch(
         side_effect=translate_side_effect,
     )
 
-    # Mock get_max_tokens to force batching
+    # Mock model limits to force batching
     mocker.patch(
-        "translatebot_django.management.commands.translate.get_max_tokens",
-        return_value=1000,
+        "translatebot_django.management.commands.translate._get_model_limits",
+        return_value=(1000, 1000),
     )
 
     with pytest.raises(CommandError, match="Insufficient API credits"):

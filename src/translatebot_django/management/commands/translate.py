@@ -12,7 +12,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 try:
     import tiktoken
-    from litellm import completion, get_max_tokens
+    from litellm import completion, get_model_info
     from litellm.exceptions import (
         AuthenticationError,
         BadRequestError,
@@ -23,7 +23,7 @@ try:
 except ImportError:
     _has_litellm = False
     completion = None  # type: ignore[assignment]
-    get_max_tokens = None  # type: ignore[assignment]
+    get_model_info = None  # type: ignore[assignment]
 
     # Sentinel classes so except clauses are syntactically valid.
     # They can never be raised when litellm is absent.
@@ -290,8 +290,71 @@ def translate_text(text, target_lang, model, api_key, context=None, comments=Non
     return translated
 
 
+# Practical output-token ceiling per batch, regardless of the model's
+# advertised max_output_tokens. Structured-output quality degrades well
+# before the advertised cap on most models, so keeping batches under
+# this ceiling improves reliability for JSON translation.
+# See issue #156.
+PRACTICAL_OUTPUT_BUDGET = 8000
+
+# Conservative defaults when litellm doesn't recognize a model. The output
+# fallback intentionally stays below PRACTICAL_OUTPUT_BUDGET so unknown
+# models batch extra-cautiously; raising it above the practical budget
+# would have no effect (the min() cap below would still win).
+_FALLBACK_INPUT_TOKENS = 8192
+_FALLBACK_OUTPUT_TOKENS = 4096
+
+
+def _get_model_limits(model):
+    """Return ``(max_input_tokens, effective_max_output_tokens)`` for a model.
+
+    The output value is capped at :data:`PRACTICAL_OUTPUT_BUDGET` so batches
+    stay in the reliable zone for structured output, even when the model
+    advertises a much larger capacity.
+
+    When litellm does not recognize the model, or when looking up its info
+    raises any error, returns conservative fallbacks
+    (:data:`_FALLBACK_INPUT_TOKENS` / :data:`_FALLBACK_OUTPUT_TOKENS`) and
+    emits a warning. Users seeing unexpectedly small batches should verify
+    the model name is correct and recognized by litellm.
+    """
+    _require_litellm()
+    try:
+        info = get_model_info(model)
+        max_input = info.get("max_input_tokens")
+        if max_input is None:
+            max_input = _FALLBACK_INPUT_TOKENS
+        max_output = info.get("max_output_tokens")
+        if max_output is None:
+            max_output = _FALLBACK_OUTPUT_TOKENS
+    except Exception as exc:
+        # litellm raises a bare Exception for unknown models, so we can't
+        # narrow the catch. Surface the failure via the logger so users
+        # notice when a typo in the model name is silently shrinking their
+        # batches.
+        logger.warning(
+            "Could not look up token limits for model %r (%s). "
+            "Falling back to conservative defaults "
+            "(max_input=%d, max_output=%d). "
+            "Verify that the model name is correct.",
+            model,
+            exc,
+            _FALLBACK_INPUT_TOKENS,
+            _FALLBACK_OUTPUT_TOKENS,
+        )
+        max_input = _FALLBACK_INPUT_TOKENS
+        max_output = _FALLBACK_OUTPUT_TOKENS
+
+    return max_input, min(max_output, PRACTICAL_OUTPUT_BUDGET)
+
+
 def batch_by_tokens(texts, target_lang, model, comments=None):
     """Split texts into token-sized groups for LLM translation.
+
+    Splits such that each batch stays within both the model's input budget
+    (``max_input_tokens``) and a practical output budget
+    (``min(max_output_tokens, PRACTICAL_OUTPUT_BUDGET)``). The latter
+    protects quality on models with very large advertised output caps.
 
     Args:
         texts: List of strings to split into batches.
@@ -303,23 +366,25 @@ def batch_by_tokens(texts, target_lang, model, comments=None):
         List of lists of strings.
     """
     _require_litellm()
+    max_input, max_output = _get_model_limits(model)
+
     groups = []
     group_candidate = []
     for item in texts:
         group_candidate += [item]
 
-        # Use the actual payload (with comments) for input token counting
         input_payload = _build_input_payload(group_candidate, comments)
-        total = get_token_count(json.dumps(input_payload, ensure_ascii=False))
-        # Output estimate based on text-only tokens (comments don't appear in output)
+        input_tokens = get_token_count(json.dumps(input_payload, ensure_ascii=False))
+        preamble_tokens = get_token_count(
+            create_preamble(target_lang, len(group_candidate))
+        )
         text_only_tokens = get_token_count(
             json.dumps(group_candidate, ensure_ascii=False)
         )
-        output_tokens_estimate = text_only_tokens * 1.3
-        preamble = create_preamble(target_lang, len(group_candidate))
-        preamble_length = get_token_count(preamble)
+        output_estimate = text_only_tokens * 1.3
 
-        if total + preamble_length + output_tokens_estimate > get_max_tokens(model):
+        input_total = input_tokens + preamble_tokens
+        if input_total > max_input or output_estimate > max_output:
             if len(group_candidate) > 1:
                 groups.append(group_candidate[:-1])
             group_candidate = [item]

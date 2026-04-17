@@ -2,19 +2,32 @@
 Tests for the translate management command.
 """
 
+import builtins
+import importlib
+import json
+import sys
 from io import StringIO
+from unittest.mock import MagicMock
 
 import polib
 import pytest
+from litellm.exceptions import AuthenticationError, BadRequestError, RateLimitError
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
+from translatebot_django.management.commands import translate as mod
 from translatebot_django.management.commands.translate import (
+    BASE_SYSTEM_PROMPT,
     Command,
     TranslationValidationError,
+    _build_input_payload,
+    batch_by_tokens,
+    build_system_prompt,
+    gather_strings,
     translate_text,
 )
+from translatebot_django.providers import get_provider
 from translatebot_django.providers.litellm import LiteLLMProvider
 from translatebot_django.utils import (
     combine_translation_contexts,
@@ -23,6 +36,8 @@ from translatebot_django.utils import (
     get_app_translation_context,
     get_model,
     get_modeltranslation_translator,
+    get_translation_context,
+    is_modeltranslation_available,
 )
 
 
@@ -330,8 +345,6 @@ def test_command_uses_languages_setting(
     de_dir.mkdir(parents=True, exist_ok=True)
 
     # Create simple .po files
-    import polib
-
     for lang_dir, _ in [(nl_dir, "nl"), (de_dir, "de")]:
         po_path = lang_dir / "django.po"
         po = polib.POFile()
@@ -356,8 +369,6 @@ def test_command_uses_languages_setting(
 @pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
 def test_command_excludes_source_language(settings, mock_completion, tmp_path):
     """Test that command excludes LANGUAGE_CODE from target languages."""
-    import polib
-
     # Setup .po files for en, nl, de
     for lang in ("en", "nl", "de"):
         lang_dir = tmp_path / "locale" / lang / "LC_MESSAGES"
@@ -388,8 +399,6 @@ def test_command_excludes_source_language_with_region(
     settings, mock_completion, tmp_path
 ):
     """Test that 'en-us' LANGUAGE_CODE excludes 'en' from target languages."""
-    import polib
-
     for lang in ("en", "nl"):
         lang_dir = tmp_path / "locale" / lang / "LC_MESSAGES"
         lang_dir.mkdir(parents=True, exist_ok=True)
@@ -415,8 +424,6 @@ def test_command_excludes_source_language_with_region(
 @pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
 def test_command_keeps_regional_variants(settings, mock_completion, tmp_path):
     """Test that regional variants are kept (e.g. en-gb when source is en-us)."""
-    import polib
-
     for lang in ("en_GB", "nl"):
         lang_dir = tmp_path / "locale" / lang / "LC_MESSAGES"
         lang_dir.mkdir(parents=True, exist_ok=True)
@@ -844,8 +851,6 @@ def test_command_output_messages(sample_po_file, mock_completion):
 @pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
 def test_command_batches_large_input(temp_locale_dir, mocker):
     """Test that command batches translations and all entries are translated."""
-    import json
-
     nl_dir = temp_locale_dir / "nl" / "LC_MESSAGES"
     nl_dir.mkdir(parents=True, exist_ok=True)
     po_path = nl_dir / "django.po"
@@ -865,8 +870,8 @@ def test_command_batches_large_input(temp_locale_dir, mocker):
     po.save(str(po_path))
 
     mocker.patch(
-        "translatebot_django.management.commands.translate.get_max_tokens",
-        return_value=500,
+        "translatebot_django.management.commands.translate._get_model_limits",
+        return_value=(500, 500),
     )
 
     call_count = 0
@@ -915,10 +920,10 @@ def test_command_batches_empty_trailing_group(temp_locale_dir, mocker):
     po.append(polib.POEntry(msgid="World", msgstr=""))
     po.save(str(po_path))
 
-    # max_tokens=1 ensures every item overflows, so group_candidate is [] at the end
+    # Tiny budget ensures every item overflows, so group_candidate is [] at the end
     mocker.patch(
-        "translatebot_django.management.commands.translate.get_max_tokens",
-        return_value=1,
+        "translatebot_django.management.commands.translate._get_model_limits",
+        return_value=(1, 1),
     )
 
     out = StringIO()
@@ -931,8 +936,6 @@ def test_command_batches_empty_trailing_group(temp_locale_dir, mocker):
 @pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
 def test_command_skips_save_when_no_changes_for_po_file(tmp_path, settings, mocker):
     """Test that a fully translated PO file is skipped (no save) in non-dry-run mode."""
-    import json
-
     # Two locale directories so the command finds two django.po files
     locale1 = tmp_path / "locale1"
     locale2 = tmp_path / "locale2"
@@ -983,8 +986,6 @@ def test_command_requires_target_lang_when_no_languages(
     settings.TRANSLATEBOT_MODEL = "gpt-4o-mini"
 
     # Call handle() directly to bypass argparse
-    from translatebot_django.management.commands.translate import Command
-
     cmd = Command()
 
     # Should raise CommandError about missing --target-lang
@@ -1008,8 +1009,6 @@ def test_command_models_flag_requires_modeltranslation(
     )
 
     # Call handle() directly to bypass argparse
-    from translatebot_django.management.commands.translate import Command
-
     cmd = Command()
     cmd.stdout = StringIO()  # Mock stdout
 
@@ -1024,8 +1023,6 @@ def test_get_modeltranslation_translator_when_not_available(mocker):
     mocker.patch(
         "translatebot_django.utils.is_modeltranslation_available", return_value=False
     )
-
-    from translatebot_django.utils import get_modeltranslation_translator
 
     result = get_modeltranslation_translator()
     assert result is None
@@ -1042,8 +1039,6 @@ def test_is_modeltranslation_available_import_error(mocker, settings):
     def mock_import_module(name):
         if name == "modeltranslation":
             raise ImportError("Mocked import error")
-        import importlib
-
         return importlib.import_module(name)
 
     # Patch at the point where the function tries to import
@@ -1052,17 +1047,11 @@ def test_is_modeltranslation_available_import_error(mocker, settings):
     # Call the function - it should catch ImportError and return False
     # Create a new version that uses importlib.import_module
     # Actually, let's just directly test by mocking the import in the try block
-    import sys
-
-    from translatebot_django.utils import is_modeltranslation_available
-
     if "modeltranslation" in sys.modules:
         # Temporarily remove it
         original_module = sys.modules.pop("modeltranslation", None)
         try:
             # Mock import to raise error
-            import builtins
-
             original_import = builtins.__import__
 
             def failing_import(name, *args, **kwargs):
@@ -1143,8 +1132,6 @@ def test_command_no_entries_dry_run(temp_locale_dir, mocker):
 @pytest.mark.usefixtures("temp_locale_dir", "mock_model_config")
 def test_command_authentication_error(sample_po_file, mocker):
     """Test that authentication errors are properly caught and reported."""
-    from litellm.exceptions import AuthenticationError
-
     # Mock translate_text to raise AuthenticationError
     mocker.patch(
         "translatebot_django.management.commands.translate.translate_text",
@@ -1168,8 +1155,6 @@ def test_command_authentication_error(sample_po_file, mocker):
 @pytest.mark.usefixtures("temp_locale_dir", "mock_model_config")
 def test_command_credit_balance_error(sample_po_file, mocker):
     """Test that credit balance errors are properly caught and reported."""
-    from litellm.exceptions import BadRequestError
-
     error_message = (
         'AnthropicException - {"type":"error","error":{"type":"invalid_request_error",'
         '"message":"Your credit balance is too low to access the Anthropic API. '
@@ -1198,8 +1183,6 @@ def test_command_credit_balance_error(sample_po_file, mocker):
 @pytest.mark.usefixtures("temp_locale_dir", "mock_model_config")
 def test_command_bad_request_error_generic(sample_po_file, mocker):
     """Test that generic bad request errors are properly caught and reported."""
-    from litellm.exceptions import BadRequestError
-
     error_message = "Some other bad request error"
 
     # Mock translate_text to raise BadRequestError
@@ -1243,8 +1226,6 @@ def test_command_validation_error_converts_to_command_error(sample_po_file, mock
 @pytest.mark.usefixtures("mock_model_config")
 def test_command_credit_balance_error_model_translation(mocker):
     """Test that credit balance errors are caught in model translation path."""
-    from litellm.exceptions import BadRequestError
-
     error_message = (
         'AnthropicException - {"type":"error","error":{"type":"invalid_request_error",'
         '"message":"Your credit balance is too low to access the Anthropic API. '
@@ -1291,8 +1272,6 @@ def test_command_credit_balance_error_model_translation(mocker):
 
     # Call handle() directly to bypass argparse (--models arg not registered
     # when modeltranslation is not actually installed)
-    from translatebot_django.management.commands.translate import Command
-
     cmd = Command()
     cmd.stdout = StringIO()
 
@@ -1303,8 +1282,6 @@ def test_command_credit_balance_error_model_translation(mocker):
 @pytest.mark.usefixtures("mock_model_config")
 def test_command_bad_request_error_generic_model_translation(mocker):
     """Test that generic bad request errors are caught in model translation path."""
-    from litellm.exceptions import BadRequestError
-
     error_message = "Some other bad request error"
 
     # Mock modeltranslation as available
@@ -1346,8 +1323,6 @@ def test_command_bad_request_error_generic_model_translation(mocker):
     )
 
     # Call handle() directly to bypass argparse
-    from translatebot_django.management.commands.translate import Command
-
     cmd = Command()
     cmd.stdout = StringIO()
 
@@ -1435,8 +1410,6 @@ def test_translate_text_non_string_elements_response(mocker):
 
 def test_translate_text_rate_limit_retry_success(mocker):
     """Test that rate limit errors trigger retry and succeed on subsequent attempt."""
-    from litellm.exceptions import RateLimitError
-
     mock_response = mocker.MagicMock()
     mock_response.choices[0].message.content = '["Hallo"]'
 
@@ -1467,8 +1440,6 @@ def test_translate_text_rate_limit_retry_success(mocker):
 
 def test_translate_text_rate_limit_retry_exponential_backoff(mocker):
     """Test that retries use exponential backoff timing."""
-    from litellm.exceptions import RateLimitError
-
     mock_response = mocker.MagicMock()
     mock_response.choices[0].message.content = '["Hallo"]'
 
@@ -1500,8 +1471,6 @@ def test_translate_text_rate_limit_retry_exponential_backoff(mocker):
 
 def test_translate_text_rate_limit_all_retries_exhausted(mocker):
     """Test that error is raised after all retries are exhausted."""
-    from litellm.exceptions import RateLimitError
-
     mock_completion = mocker.patch(
         "translatebot_django.management.commands.translate.completion"
     )
@@ -1530,8 +1499,6 @@ def test_translate_text_rate_limit_all_retries_exhausted(mocker):
 
 def test_get_translation_context_from_base_dir(tmp_path, settings):
     """Test that get_translation_context finds TRANSLATING.md in BASE_DIR."""
-    from translatebot_django.utils import get_translation_context
-
     settings.BASE_DIR = tmp_path
     context_file = tmp_path / "TRANSLATING.md"
     context_file.write_text("This is a medical translation project.")
@@ -1542,8 +1509,6 @@ def test_get_translation_context_from_base_dir(tmp_path, settings):
 
 def test_get_translation_context_from_cwd(tmp_path, settings, monkeypatch):
     """Test that get_translation_context finds TRANSLATING.md in current directory."""
-    from translatebot_django.utils import get_translation_context
-
     # Clear BASE_DIR so it falls back to cwd
     settings.BASE_DIR = None
     monkeypatch.chdir(tmp_path)
@@ -1557,8 +1522,6 @@ def test_get_translation_context_from_cwd(tmp_path, settings, monkeypatch):
 
 def test_get_translation_context_not_found(tmp_path, settings, monkeypatch):
     """Test that get_translation_context returns None when file doesn't exist."""
-    from translatebot_django.utils import get_translation_context
-
     settings.BASE_DIR = tmp_path
     monkeypatch.chdir(tmp_path)
 
@@ -1568,8 +1531,6 @@ def test_get_translation_context_not_found(tmp_path, settings, monkeypatch):
 
 def test_get_translation_context_prefers_base_dir(tmp_path, settings, monkeypatch):
     """Test that BASE_DIR takes precedence over cwd."""
-    from translatebot_django.utils import get_translation_context
-
     other_dir = tmp_path / "other"
     other_dir.mkdir()
     monkeypatch.chdir(other_dir)
@@ -1589,8 +1550,6 @@ def test_get_translation_context_prefers_base_dir(tmp_path, settings, monkeypatc
 
 def test_get_translation_context_strips_whitespace(tmp_path, settings):
     """Test that get_translation_context strips leading/trailing whitespace."""
-    from translatebot_django.utils import get_translation_context
-
     settings.BASE_DIR = tmp_path
     context_file = tmp_path / "TRANSLATING.md"
     context_file.write_text("\n\n  Some context with whitespace  \n\n")
@@ -1601,8 +1560,6 @@ def test_get_translation_context_strips_whitespace(tmp_path, settings):
 
 def test_get_translation_context_handles_read_error(tmp_path, settings, mocker):
     """Test that get_translation_context handles file read errors gracefully."""
-    from translatebot_django.utils import get_translation_context
-
     settings.BASE_DIR = tmp_path
     context_file = tmp_path / "TRANSLATING.md"
     context_file.write_text("Some context")
@@ -1616,11 +1573,6 @@ def test_get_translation_context_handles_read_error(tmp_path, settings, mocker):
 
 def test_build_system_prompt_without_context():
     """Test that build_system_prompt returns base prompt when no context provided."""
-    from translatebot_django.management.commands.translate import (
-        BASE_SYSTEM_PROMPT,
-        build_system_prompt,
-    )
-
     result = build_system_prompt(None)
     assert result == BASE_SYSTEM_PROMPT
 
@@ -1630,11 +1582,6 @@ def test_build_system_prompt_without_context():
 
 def test_build_system_prompt_with_context():
     """Test that build_system_prompt includes context in the prompt."""
-    from translatebot_django.management.commands.translate import (
-        BASE_SYSTEM_PROMPT,
-        build_system_prompt,
-    )
-
     context = "This is a medical translation project."
     result = build_system_prompt(context)
 
@@ -1907,8 +1854,6 @@ def test_app_flag_with_models_raises_error(settings, mocker):
         return_value="test-key",
     )
 
-    from translatebot_django.management.commands.translate import Command
-
     cmd = Command()
     cmd.stdout = StringIO()
 
@@ -1926,8 +1871,6 @@ def test_app_flag_with_models_raises_error(settings, mocker):
 
 def test_translate_text_without_context_uses_base_prompt(mocker):
     """Test that translate_text uses base prompt when no context provided."""
-    from translatebot_django.management.commands.translate import BASE_SYSTEM_PROMPT
-
     mock_response = mocker.MagicMock()
     mock_response.choices[0].message.content = '["Hallo"]'
 
@@ -2041,8 +1984,6 @@ def test_command_passes_context_to_model_translation(settings, tmp_path, mocker)
     mock_translate.return_value = ["Vertaald"]
 
     # Call handle() directly to bypass argparse
-    from translatebot_django.management.commands.translate import Command
-
     cmd = Command()
     cmd.stdout = StringIO()
     cmd.handle(target_lang="nl", dry_run=False, overwrite=False, models=[])
@@ -2465,8 +2406,6 @@ def test_command_output_shows_per_app_context_message(tmp_path, settings, mocker
 @pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key")
 def test_command_deepl_provider_end_to_end(sample_po_file, settings, mocker):
     """Test end-to-end translation with DeepL provider."""
-    from unittest.mock import MagicMock
-
     settings.TRANSLATEBOT_PROVIDER = "deepl"
 
     mock_result_1 = MagicMock()
@@ -2500,8 +2439,6 @@ def test_command_deepl_translating_md_warning(
     sample_po_file, settings, tmp_path, mocker
 ):
     """Test that TRANSLATING.md triggers a warning with DeepL provider."""
-    from unittest.mock import MagicMock
-
     settings.TRANSLATEBOT_PROVIDER = "deepl"
     settings.BASE_DIR = tmp_path
     context_file = tmp_path / "TRANSLATING.md"
@@ -2523,8 +2460,6 @@ def test_command_deepl_translating_md_warning(
 @pytest.mark.usefixtures("mock_env_api_key")
 def test_command_deepl_per_app_translating_md_warning(tmp_path, settings, mocker):
     """Test that per-app TRANSLATING.md triggers a warning with DeepL provider."""
-    from unittest.mock import MagicMock
-
     settings.TRANSLATEBOT_PROVIDER = "deepl"
     settings.BASE_DIR = tmp_path
     settings.LOCALE_PATHS = []
@@ -2570,8 +2505,6 @@ def test_get_provider_litellm_missing_raises_error(settings, mocker):
         "translatebot_django.management.commands.translate._has_litellm", False
     )
 
-    from translatebot_django.providers import get_provider
-
     with pytest.raises(CommandError, match="pip install translatebot-django"):
         get_provider(api_key="test-key")
 
@@ -2593,8 +2526,6 @@ def test_translate_text_litellm_missing_raises_error(mocker):
 
 def test_batch_by_tokens_litellm_missing_raises_error(mocker):
     """Test that batch_by_tokens raises CommandError when litellm is not installed."""
-    from translatebot_django.management.commands.translate import batch_by_tokens
-
     mocker.patch(
         "translatebot_django.management.commands.translate._has_litellm", False
     )
@@ -2607,8 +2538,6 @@ def test_deepl_provider_works_without_litellm(
     sample_po_file, settings, mock_env_api_key, mocker
 ):
     """Test that the DeepL provider works even when litellm is absent."""
-    from unittest.mock import MagicMock
-
     settings.TRANSLATEBOT_PROVIDER = "deepl"
     mocker.patch.dict("sys.modules", {"litellm": None})
 
@@ -2630,24 +2559,19 @@ def test_deepl_provider_works_without_litellm(
 
 def test_litellm_import_error_creates_sentinel_classes():
     """Test that sentinel classes are created when litellm is not importable."""
-    import importlib
-    import sys
-
-    import translatebot_django.management.commands.translate as translate_mod
-
     # Block litellm and tiktoken so the try block raises ImportError
     blocked = {"tiktoken": None, "litellm": None, "litellm.exceptions": None}
     original_modules = {k: sys.modules.get(k) for k in blocked}
     sys.modules.update(blocked)
     try:
-        importlib.reload(translate_mod)
+        importlib.reload(mod)
 
-        assert translate_mod._has_litellm is False
-        assert translate_mod.completion is None
-        assert translate_mod.get_max_tokens is None
-        assert issubclass(translate_mod.AuthenticationError, Exception)
-        assert issubclass(translate_mod.BadRequestError, Exception)
-        assert issubclass(translate_mod.RateLimitError, Exception)
+        assert mod._has_litellm is False
+        assert mod.completion is None
+        assert mod.get_model_info is None
+        assert issubclass(mod.AuthenticationError, Exception)
+        assert issubclass(mod.BadRequestError, Exception)
+        assert issubclass(mod.RateLimitError, Exception)
     finally:
         # Restore original module entries and reload to reset state
         for k, v in original_modules.items():
@@ -2655,7 +2579,7 @@ def test_litellm_import_error_creates_sentinel_classes():
                 sys.modules.pop(k, None)
             else:
                 sys.modules[k] = v
-        importlib.reload(translate_mod)
+        importlib.reload(mod)
 
 
 # --- Test for `seen` deduplication in gather_strings ---
@@ -2663,8 +2587,6 @@ def test_litellm_import_error_creates_sentinel_classes():
 
 def test_gather_strings_deduplicates_shared_plural_msgids(tmp_path):
     """Test that gather_strings deduplicates when plural entries share msgid strings."""
-    from translatebot_django.management.commands.translate import gather_strings
-
     po_path = tmp_path / "django.po"
     po = polib.POFile()
     po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
@@ -2699,8 +2621,6 @@ def test_gather_strings_deduplicates_shared_plural_msgids(tmp_path):
 
 def test_gather_strings_returns_extracted_comments(tmp_path):
     """Test that gather_strings returns extracted comments from PO entries."""
-    from translatebot_django.management.commands.translate import gather_strings
-
     po_path = tmp_path / "django.po"
     po = polib.POFile()
     po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
@@ -2722,8 +2642,6 @@ def test_gather_strings_returns_extracted_comments(tmp_path):
 
 def test_gather_strings_plural_entry_comment_applies_to_both_forms(tmp_path):
     """Test that a plural entry's comment applies to both msgid and msgid_plural."""
-    from translatebot_django.management.commands.translate import gather_strings
-
     po_path = tmp_path / "django.po"
     po = polib.POFile()
     po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
@@ -2746,8 +2664,6 @@ def test_gather_strings_plural_entry_comment_applies_to_both_forms(tmp_path):
 
 def test_gather_strings_ignores_empty_and_whitespace_comments(tmp_path):
     """Test that entries with empty or whitespace-only comments are excluded."""
-    from translatebot_django.management.commands.translate import gather_strings
-
     po_path = tmp_path / "django.po"
     po = polib.POFile()
     po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
@@ -2762,8 +2678,6 @@ def test_gather_strings_ignores_empty_and_whitespace_comments(tmp_path):
 
 def test_build_input_payload_with_comments():
     """Test _build_input_payload returns objects when comments are present."""
-    from translatebot_django.management.commands.translate import _build_input_payload
-
     texts = ["Save", "Hello"]
     comments = {"Save": "Button label for saving"}
     result = _build_input_payload(texts, comments)
@@ -2775,8 +2689,6 @@ def test_build_input_payload_with_comments():
 
 def test_build_input_payload_without_comments():
     """Test _build_input_payload returns plain list when no comments."""
-    from translatebot_django.management.commands.translate import _build_input_payload
-
     texts = ["Save", "Hello"]
     assert _build_input_payload(texts) is texts
     assert _build_input_payload(texts, None) is texts
@@ -2786,8 +2698,6 @@ def test_build_input_payload_without_comments():
 @pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
 def test_command_passes_po_comments_to_translation(temp_locale_dir, mocker):
     """Test that extracted comments from PO entries reach the LLM."""
-    import json
-
     nl_dir = temp_locale_dir / "nl" / "LC_MESSAGES"
     nl_dir.mkdir(parents=True, exist_ok=True)
     po_path = nl_dir / "django.po"
@@ -2818,8 +2728,6 @@ def test_command_passes_po_comments_to_translation(temp_locale_dir, mocker):
 @pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
 def test_command_no_comments_sends_plain_array(temp_locale_dir, mock_completion):
     """Test that entries without comments use plain JSON array format."""
-    import json
-
     nl_dir = temp_locale_dir / "nl" / "LC_MESSAGES"
     nl_dir.mkdir(parents=True, exist_ok=True)
     po_path = nl_dir / "django.po"
@@ -2840,8 +2748,6 @@ def test_command_no_comments_sends_plain_array(temp_locale_dir, mock_completion)
 
 def test_base_system_prompt_mentions_comment_fields():
     """Test that the system prompt instructs the LLM about comment fields."""
-    from translatebot_django.management.commands.translate import BASE_SYSTEM_PROMPT
-
     assert "comment" in BASE_SYSTEM_PROMPT.lower()
     assert "disambiguate" in BASE_SYSTEM_PROMPT.lower()
 
@@ -2852,8 +2758,6 @@ def test_gather_strings_skips_comments_for_already_translated_entries(tmp_path):
     only_empty=False is the non-overwrite mode (the default call path), which
     skips entries that already have a translation.
     """
-    from translatebot_django.management.commands.translate import gather_strings
-
     po_path = tmp_path / "django.po"
     po = polib.POFile()
     po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
@@ -2885,8 +2789,6 @@ def test_comment_conflict_across_po_files_last_wins(
 ):
     """Test that when the same msgid has different comments in two PO files,
     the last one processed wins."""
-    from translatebot_django.management.commands.translate import gather_strings
-
     locale1 = tmp_path / "locale1"
     locale2 = tmp_path / "locale2"
 
@@ -2919,11 +2821,9 @@ def test_comment_conflict_across_po_files_last_wins(
 
 def test_batch_by_tokens_accounts_for_comments(mocker):
     """Test that batch_by_tokens creates more batches when comments add token weight."""
-    from translatebot_django.management.commands.translate import batch_by_tokens
-
     mocker.patch(
-        "translatebot_django.management.commands.translate.get_max_tokens",
-        return_value=500,
+        "translatebot_django.management.commands.translate._get_model_limits",
+        return_value=(500, 500),
     )
 
     texts = ["Short"] * 10
@@ -2938,6 +2838,121 @@ def test_batch_by_tokens_accounts_for_comments(mocker):
     # Verify all strings are still present across batches
     assert sum(len(b) for b in batches_with) == 10
     assert sum(len(b) for b in batches_without) == 10
+
+
+def test_batch_by_tokens_caps_at_practical_output_budget():
+    """Regression for #156.
+
+    With a large-output model like gpt-5-mini (128K max_output_tokens),
+    hundreds of modeltranslation strings should split into multiple
+    batches to stay under the practical output quality ceiling, rather
+    than packing into a single batch that triggers degraded output
+    (returned-as-English, malformed JSON, missing translations).
+
+    Each batch's estimated output tokens must stay at or below
+    ``PRACTICAL_OUTPUT_BUDGET``; otherwise the cap is not actually
+    enforced and a subtly-wrong cap value could pass a weaker
+    "more than one batch" assertion.
+    """
+    texts = ["A translatable CMS string of moderate length"] * 800
+    batches = mod.batch_by_tokens(texts, "nl", "gpt-5-mini")
+
+    assert len(batches) > 1, "Expected multiple batches for 800 strings on gpt-5-mini"
+    assert sum(len(b) for b in batches) == 800
+
+    for batch in batches:
+        text_only_tokens = mod.get_token_count(json.dumps(batch, ensure_ascii=False))
+        output_estimate = text_only_tokens * 1.3
+        # Allow a small over-shoot for the single trailing item that
+        # tipped the batch past the budget — that item is still emitted
+        # in the previous group's batch boundary check.
+        assert output_estimate <= mod.PRACTICAL_OUTPUT_BUDGET * 1.1, (
+            f"Batch of {len(batch)} strings has output estimate "
+            f"{output_estimate:.0f} > 1.1x PRACTICAL_OUTPUT_BUDGET "
+            f"({mod.PRACTICAL_OUTPUT_BUDGET})"
+        )
+
+
+def test_batch_by_tokens_splits_on_input_budget(mocker):
+    """Input-budget overflow alone is enough to split a batch.
+
+    Covers the input branch of the OR in batch_by_tokens (the output-cap
+    branch is exercised by the regression test above).
+    """
+    # Tight input budget, generous output budget — only the input check
+    # can trigger a split here.
+    mocker.patch.object(mod, "_get_model_limits", return_value=(200, 1_000_000))
+
+    texts = ["Some text that takes a few tokens"] * 50
+    batches = mod.batch_by_tokens(texts, "nl", "gpt-4o-mini")
+
+    assert len(batches) > 1
+    assert sum(len(b) for b in batches) == 50
+
+
+def test_batch_by_tokens_isolates_oversized_single_item(mocker):
+    """A single item that exceeds the budget gets its own batch.
+
+    Locks down the ``len(group_candidate) == 1`` edge case: when one
+    item alone overflows, we cannot split it further, so it must be
+    emitted as a standalone batch (not silently merged with siblings).
+    """
+    # Tiny budgets so any single item overflows.
+    mocker.patch.object(mod, "_get_model_limits", return_value=(50, 50))
+
+    huge = "x " * 500  # well over 50 tokens
+    small = "tiny"
+    batches = mod.batch_by_tokens([huge, small, small], "nl", "gpt-4o-mini")
+
+    # The huge item is in its own batch; the two small items follow.
+    assert [huge] in batches
+    assert sum(len(b) for b in batches) == 3
+
+
+def test_get_model_limits_caps_output_at_practical_budget(mocker):
+    """The practical output cap applies even when litellm reports a huge one."""
+    mocker.patch.object(
+        mod,
+        "get_model_info",
+        return_value={"max_input_tokens": 200_000, "max_output_tokens": 128_000},
+    )
+
+    max_input, max_output = mod._get_model_limits("gpt-5-mini")
+
+    assert max_input == 200_000
+    assert max_output == mod.PRACTICAL_OUTPUT_BUDGET
+
+
+def test_get_model_limits_falls_back_when_model_unknown(mocker, caplog):
+    """Unknown models fall back to conservative defaults and warn the user."""
+    mocker.patch.object(mod, "get_model_info", side_effect=Exception("unknown model"))
+
+    with caplog.at_level("WARNING", logger=mod.logger.name):
+        max_input, max_output = mod._get_model_limits("some-obscure-model")
+
+    assert max_input == mod._FALLBACK_INPUT_TOKENS
+    assert max_output == min(mod._FALLBACK_OUTPUT_TOKENS, mod.PRACTICAL_OUTPUT_BUDGET)
+    assert any("some-obscure-model" in r.message for r in caplog.records), (
+        "Expected a warning naming the unknown model"
+    )
+
+
+def test_get_model_limits_falls_back_when_keys_missing(mocker):
+    """When litellm returns a dict with None values, fallbacks kick in.
+
+    Uses an explicit ``is None`` check (not a truthy ``or``) so that a
+    legitimate ``0`` would be respected if litellm ever emits one.
+    """
+    mocker.patch.object(
+        mod,
+        "get_model_info",
+        return_value={"max_input_tokens": None, "max_output_tokens": None},
+    )
+
+    max_input, max_output = mod._get_model_limits("partial-info-model")
+
+    assert max_input == mod._FALLBACK_INPUT_TOKENS
+    assert max_output == min(mod._FALLBACK_OUTPUT_TOKENS, mod.PRACTICAL_OUTPUT_BUDGET)
 
 
 def test_save_po_translations_preserves_existing(tmp_path):
@@ -3120,9 +3135,7 @@ def test_handle_sets_translate_stats_nothing_to_translate(
     """_translate_stats reports zero strings when everything is up to date."""
     # Translate first so everything is up to date
     # (dry_run leaves entries empty, so use a pre-translated file instead)
-    import polib as _polib
-
-    po = _polib.pofile(str(sample_po_file))
+    po = polib.pofile(str(sample_po_file))
     for entry in po:
         if not entry.msgstr:
             entry.msgstr = "vertaald"
