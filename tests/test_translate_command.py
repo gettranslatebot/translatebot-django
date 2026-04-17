@@ -865,8 +865,8 @@ def test_command_batches_large_input(temp_locale_dir, mocker):
     po.save(str(po_path))
 
     mocker.patch(
-        "translatebot_django.management.commands.translate.get_max_tokens",
-        return_value=500,
+        "translatebot_django.management.commands.translate._get_model_limits",
+        return_value=(500, 500),
     )
 
     call_count = 0
@@ -915,10 +915,10 @@ def test_command_batches_empty_trailing_group(temp_locale_dir, mocker):
     po.append(polib.POEntry(msgid="World", msgstr=""))
     po.save(str(po_path))
 
-    # max_tokens=1 ensures every item overflows, so group_candidate is [] at the end
+    # Tiny budget ensures every item overflows, so group_candidate is [] at the end
     mocker.patch(
-        "translatebot_django.management.commands.translate.get_max_tokens",
-        return_value=1,
+        "translatebot_django.management.commands.translate._get_model_limits",
+        return_value=(1, 1),
     )
 
     out = StringIO()
@@ -2644,7 +2644,7 @@ def test_litellm_import_error_creates_sentinel_classes():
 
         assert translate_mod._has_litellm is False
         assert translate_mod.completion is None
-        assert translate_mod.get_max_tokens is None
+        assert translate_mod.get_model_info is None
         assert issubclass(translate_mod.AuthenticationError, Exception)
         assert issubclass(translate_mod.BadRequestError, Exception)
         assert issubclass(translate_mod.RateLimitError, Exception)
@@ -2922,8 +2922,8 @@ def test_batch_by_tokens_accounts_for_comments(mocker):
     from translatebot_django.management.commands.translate import batch_by_tokens
 
     mocker.patch(
-        "translatebot_django.management.commands.translate.get_max_tokens",
-        return_value=500,
+        "translatebot_django.management.commands.translate._get_model_limits",
+        return_value=(500, 500),
     )
 
     texts = ["Short"] * 10
@@ -2938,6 +2938,57 @@ def test_batch_by_tokens_accounts_for_comments(mocker):
     # Verify all strings are still present across batches
     assert sum(len(b) for b in batches_with) == 10
     assert sum(len(b) for b in batches_without) == 10
+
+
+def test_batch_by_tokens_caps_at_practical_output_budget(mocker):
+    """Regression for #156.
+
+    With a large-output model like gpt-5-mini (128K max_output_tokens),
+    hundreds of modeltranslation strings should split into multiple
+    batches to stay under the practical output quality ceiling, rather
+    than packing into a single batch that triggers degraded output
+    (returned-as-English, malformed JSON, missing translations).
+    """
+    from translatebot_django.management.commands import translate as mod
+
+    texts = ["A translatable CMS string of moderate length"] * 800
+    batches = mod.batch_by_tokens(texts, "nl", "gpt-5-mini")
+
+    assert len(batches) > 1, "Expected multiple batches for 800 strings on gpt-5-mini"
+    assert sum(len(b) for b in batches) == 800
+    assert all(len(b) < 800 for b in batches)
+
+
+def test_get_model_limits_caps_output_at_practical_budget(mocker):
+    """The practical output cap applies even when litellm reports a huge one."""
+    from translatebot_django.management.commands import translate as mod
+
+    mocker.patch.object(
+        mod,
+        "get_model_info",
+        return_value={"max_input_tokens": 200_000, "max_output_tokens": 128_000},
+    )
+
+    max_input, max_output = mod._get_model_limits("gpt-5-mini")
+
+    assert max_input == 200_000
+    assert max_output == mod.PRACTICAL_OUTPUT_BUDGET
+
+
+def test_get_model_limits_falls_back_when_model_unknown(mocker):
+    """Unknown models fall back to conservative defaults, not crashes."""
+    from translatebot_django.management.commands import translate as mod
+
+    mocker.patch.object(
+        mod, "get_model_info", side_effect=Exception("unknown model")
+    )
+
+    max_input, max_output = mod._get_model_limits("some-obscure-model")
+
+    assert max_input == mod._FALLBACK_INPUT_TOKENS
+    assert max_output == min(
+        mod._FALLBACK_OUTPUT_TOKENS, mod.PRACTICAL_OUTPUT_BUDGET
+    )
 
 
 def test_save_po_translations_preserves_existing(tmp_path):
