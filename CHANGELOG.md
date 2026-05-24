@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-05-24
+
+### Changed
+
+- Updated Django from 5.2.13 to 5.2.14
+- Updated litellm
+- Updated urllib3 from 2.6.3 to 2.7.0
+- Updated idna from 3.13 to 3.15
+- Updated python-dotenv from 1.0.1 to 1.2.2
+- Updated aiohttp from 3.13.3 to 3.13.4
+- Updated ruff
+- Refreshed `uv.lock` with latest compatible versions
+
 ## [1.3.1] - 2026-04-17
 
 ### Fixed
@@ -420,6 +433,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[1.3.2]: https://github.com/gettranslatebot/translatebot-django/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/gettranslatebot/translatebot-django/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/gettranslatebot/translatebot-django/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/gettranslatebot/translatebot-django/compare/v1.1.1...v1.2.0
