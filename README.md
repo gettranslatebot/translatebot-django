@@ -47,7 +47,7 @@ uv add translatebot-django
 # settings.py
 INSTALLED_APPS = [
     # ...
-    'translatebot_django',
+    "translatebot_django",
 ]
 
 TRANSLATEBOT_API_KEY = "your-api-key-here"
