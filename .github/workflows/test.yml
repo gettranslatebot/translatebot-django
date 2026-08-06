@@ -39,7 +39,10 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-        django-version: ["4.2", "5.0", "5.1", "5.2", "6"]
+        # Every entry is a "major.minor" series, so the "Django~=<series>.0" pin
+        # below resolves within that series. A bare major such as "6" would pin
+        # only the major and drift onto the next minor release.
+        django-version: ["4.2", "5.0", "5.1", "5.2", "6.0", "6.1"]
         # pytest-django 4.13 reads TestCase._pre_setup_ran_eagerly, which Django
         # only added in 5.2. It declares no Django bound, so pip cannot back off
         # on its own. Newer Django keeps testing against the current release.
@@ -51,11 +54,15 @@ jobs:
           - django-version: "5.1"
             extra-pins: "pytest-django<4.13"
         exclude:
-          # Django 6.0 requires Python 3.12+
+          # Django 6.x requires Python 3.12+
           - python-version: "3.10"
-            django-version: "6"
+            django-version: "6.0"
           - python-version: "3.11"
-            django-version: "6"
+            django-version: "6.0"
+          - python-version: "3.10"
+            django-version: "6.1"
+          - python-version: "3.11"
+            django-version: "6.1"
           # Django 4.2 supports Python <= 3.12
           - python-version: "3.13"
             django-version: "4.2"
@@ -99,8 +106,7 @@ jobs:
         import os, django
         want = os.environ["DJANGO_SERIES"]
         got = ".".join(str(p) for p in django.VERSION[:2])
-        ok = got == want if "." in want else got.split(".")[0] == want
-        raise SystemExit(0 if ok else f"expected Django {want}.x, got {got}")
+        raise SystemExit(0 if got == want else f"expected Django {want}.x, got {got}")
         '
 
     - name: Run tests
@@ -109,7 +115,7 @@ jobs:
       run: |
         pytest -v --cov=translatebot_django --cov-report=xml --cov-report=term
     - name: Upload coverage to Codecov
-      if: matrix.python-version == '3.14' && matrix.django-version == '6'
+      if: matrix.python-version == '3.14' && matrix.django-version == '6.1'
       uses: codecov/codecov-action@v7
       with:
         files: ./coverage.xml
