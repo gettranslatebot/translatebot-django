@@ -28,3 +28,16 @@ class Product(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class Document(models.Model):
+    """Test model with a translated file field."""
+
+    name = models.CharField(max_length=100)
+    attachment = models.FileField(upload_to="docs/", blank=True)
+
+    class Meta:
+        app_label = "tests"
+
+    def __str__(self):
+        return self.name

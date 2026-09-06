@@ -2,7 +2,7 @@
 
 from modeltranslation.translator import TranslationOptions, register
 
-from .models import Article, Product
+from .models import Article, Document, Product
 
 
 @register(Article)
@@ -13,3 +13,8 @@ class ArticleTranslationOptions(TranslationOptions):
 @register(Product)
 class ProductTranslationOptions(TranslationOptions):
     fields = ("name", "description")
+
+
+@register(Document)
+class DocumentTranslationOptions(TranslationOptions):
+    fields = ("name", "attachment")

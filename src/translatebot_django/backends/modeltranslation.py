@@ -152,7 +152,7 @@ class ModeltranslationBackend:
                   original column when translations are applied (or None)
                 - backfill_value: Value for backfill_field (or None)
         """
-        from django.db.models import Q
+        from django.db.models import FileField, Q
 
         models = model_list or self.get_all_registered_models()
         translatable_items = []
@@ -162,6 +162,14 @@ class ModeltranslationBackend:
 
             for field_name in fields:
                 target_field = self.get_target_field_name(field_name)
+
+                # The original column of a FileField/ImageField holds a raw
+                # path string; shipping it to a translation provider would
+                # write prose into file columns. Only text content may fall
+                # back to the original column.
+                original_is_text = not isinstance(
+                    model._meta.get_field(field_name), FileField
+                )
 
                 source_langs = [
                     lang for lang in self.available_langs if lang != self.target_lang
@@ -183,7 +191,7 @@ class ModeltranslationBackend:
 
                 # The original column holds the default-language value for
                 # rows never saved through the modeltranslation descriptor.
-                if self.default_lang in source_langs:
+                if self.default_lang in source_langs and original_is_text:
                     q_has_content |= Q(**{f"{field_name}__isnull": False}) & ~Q(
                         **{f"{field_name}__exact": ""}
                     )
@@ -224,7 +232,7 @@ class ModeltranslationBackend:
                     for lang in source_langs:
                         lang_field = self._localized_fieldname(field_name, lang)
                         text = getattr(instance, lang_field, None)
-                        if not text and lang == self.default_lang:
+                        if not text and lang == self.default_lang and original_is_text:
                             # Read the original column from __dict__ to bypass
                             # the descriptor, which would resolve to the
                             # active language instead of the raw column value.

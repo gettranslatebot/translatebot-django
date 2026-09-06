@@ -246,6 +246,32 @@ class TestModeltranslationBackendWithDB:
         assert by_field["title"]["backfill_field"] == "title_en"
         assert by_field["title"]["backfill_value"] == "Legacy Title"
 
+    def test_backend_original_column_fallback_skips_file_fields(self):
+        """The original column of a FileField holds a raw path string; it
+        must never be shipped to a translation provider (which would write
+        prose into file columns). Text fields still fall back."""
+        from tests.models import Document
+
+        backend = ModeltranslationBackend(target_lang="nl")
+
+        doc = Document.objects.create(name="Manual", attachment="docs/manual.pdf")
+        # Simulate legacy data: language columns empty, values only in the
+        # original columns
+        Document.objects.filter(pk=doc.pk).update(
+            name_en=None,
+            name_de=None,
+            attachment_en=None,
+            attachment_de=None,
+        )
+
+        items = backend.gather_translatable_content(
+            model_list=[Document], only_empty=True
+        )
+
+        fields = {item["field"] for item in items}
+        assert "name" in fields  # text falls back to the original column
+        assert "attachment" not in fields  # file path is never a source text
+
     def test_backend_apply_translations_backfills_default_language(self):
         """Applying a translation sourced from the original column also syncs
         the default-language column, like update_translation_fields would."""
