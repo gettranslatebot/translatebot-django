@@ -937,6 +937,8 @@ class Command(BaseCommand):
                                 "instance": item["instance"],
                                 "target_field": item["target_field"],
                                 "translation": translation,
+                                "backfill_field": item.get("backfill_field"),
+                                "backfill_value": item.get("backfill_value"),
                             }
                         )
 
