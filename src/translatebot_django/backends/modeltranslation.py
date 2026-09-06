@@ -16,10 +16,17 @@ class ModeltranslationBackend:
         Args:
             target_lang: Target language code (e.g., 'de', 'nl', 'fr')
         """
+        from modeltranslation import settings as mt_settings
         from modeltranslation.translator import translator
 
         self.translator = translator
         self.target_lang = target_lang
+        # modeltranslation stores the default-language value in the original
+        # column; the <field>_<default_lang> column is only a mirror that gets
+        # synced on descriptor-mediated saves. Rows created before
+        # modeltranslation was installed (or written via update()/imports)
+        # have their default-language content only in the original column.
+        self.default_lang = mt_settings.DEFAULT_LANGUAGE
 
     def get_all_registered_models(self):
         """
@@ -163,12 +170,24 @@ class ModeltranslationBackend:
                         **{f"{lang_field}__exact": ""}
                     )
 
+                # The original column holds the default-language value for
+                # rows never saved through the modeltranslation descriptor.
+                if self.default_lang in source_langs:
+                    q_has_content |= Q(**{f"{field_name}__isnull": False}) & ~Q(
+                        **{f"{field_name}__exact": ""}
+                    )
+
                 # If no source languages available, skip this field
                 if not source_langs:
                     continue
 
-                # Base queryset: at least one source language field has content
-                queryset = model.objects.filter(q_has_content)
+                # Base queryset: at least one source language field has content.
+                # Disable modeltranslation's lookup rewriting so the original
+                # column condition isn't redirected to the active language.
+                queryset = model.objects.all()
+                if hasattr(queryset, "rewrite"):
+                    queryset = queryset.rewrite(False)
+                queryset = queryset.filter(q_has_content)
 
                 if only_empty:
                     # Only translate where target field is empty or null
@@ -186,6 +205,15 @@ class ModeltranslationBackend:
                         if text:  # Found a populated source field
                             source_text = text
                             break
+
+                    if not source_text and self.default_lang in source_langs:
+                        # Last resort: the original column, which holds the
+                        # default-language value for rows never saved through
+                        # the modeltranslation descriptor. Read it from
+                        # __dict__ to bypass the descriptor, which would
+                        # resolve to the active language instead of the raw
+                        # column value.
+                        source_text = instance.__dict__.get(field_name)
 
                     if source_text:
                         translatable_items.append(
@@ -212,35 +240,38 @@ class ModeltranslationBackend:
             dry_run: If True, don't actually save to database
 
         Returns:
-            int: Number of instances updated
+            int: Number of model fields updated
         """
         if dry_run:
             return len(translation_items)
 
-        # Group by model for efficient bulk_update
-        by_model = defaultdict(lambda: {"instances": [], "fields": set()})
+        # The same DB row appears as a separate instance per translated field
+        # (gather_translatable_content runs one queryset per field), so first
+        # consolidate onto one canonical instance per (model, pk). Passing
+        # duplicate pks to bulk_update would let one copy's stale loaded
+        # values overwrite another copy's translation.
+        by_model = defaultdict(dict)  # model -> pk -> (instance, {fields})
 
         for item in translation_items:
             instance = item["instance"]
             target_field = item["target_field"]
             translation = item["translation"]
 
-            # Set the translation on the instance
-            setattr(instance, target_field, translation)
+            rows = by_model[instance.__class__]
+            canonical, fields = rows.setdefault(instance.pk, (instance, set()))
+            setattr(canonical, target_field, translation)
+            fields.add(target_field)
 
-            # Track for bulk update
-            model_cls = instance.__class__
-            by_model[model_cls]["instances"].append(instance)
-            by_model[model_cls]["fields"].add(target_field)
-
-        # Bulk update by model
-        updated_count = 0
-        for model_cls, data in by_model.items():
-            instances = data["instances"]
-            fields = list(data["fields"])
+        # Bulk update per model, grouping rows by the exact set of translated
+        # fields: updating a broader field set would write stale values into
+        # fields that were translated in an earlier batch.
+        for model_cls, rows in by_model.items():
+            field_groups = defaultdict(list)  # frozenset(fields) -> [instances]
+            for canonical, fields in rows.values():
+                field_groups[frozenset(fields)].append(canonical)
 
             with transaction.atomic():
-                model_cls.objects.bulk_update(instances, fields)
-                updated_count += len(instances)
+                for fields, instances in field_groups.items():
+                    model_cls.objects.bulk_update(instances, list(fields))
 
-        return updated_count
+        return len(translation_items)

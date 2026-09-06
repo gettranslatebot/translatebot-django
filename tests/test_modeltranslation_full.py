@@ -134,8 +134,7 @@ class TestModeltranslationBackendWithDB:
         # Apply translations
         updated = backend.apply_translations(translation_items, dry_run=False)
 
-        # The function counts instances in the list, which includes the same
-        # instance twice
+        # The function counts translated fields
         assert updated == 2
 
         # Verify translations were applied
@@ -195,26 +194,131 @@ class TestModeltranslationBackendWithDB:
         """Test that instances with no populated source fields are skipped."""
         backend = ModeltranslationBackend(target_lang="nl")
 
-        # Create an article, then null out all source language fields
+        # Create an article, then empty out every source of content in memory:
+        # all language fields and the original columns
         article = Article.objects.create(title="tmp", content="tmp")
-        Article.objects.filter(pk=article.pk).update(
-            title_en=None,
-            title_de=None,
-            content_en=None,
-            content_de=None,
-            description_en=None,
-            description_de=None,
-        )
-        article.refresh_from_db()
+        for field in ("title", "content", "description"):
+            for lang in ("en", "de"):
+                setattr(article, f"{field}_{lang}", None)
+            article.__dict__[field] = None
 
-        # Mock filter to return our empty article, simulating a TOCTOU
-        # where data changed after the queryset filter
-        mocker.patch.object(Article.objects, "filter", return_value=[article])
+        # Mock the queryset chain to return our empty article, simulating a
+        # TOCTOU where data changed after the queryset filter
+        queryset = mocker.MagicMock()
+        queryset.rewrite.return_value.filter.return_value = [article]
+        mocker.patch.object(Article.objects, "all", return_value=queryset)
 
         items = backend.gather_translatable_content(
             model_list=[Article], only_empty=False
         )
         assert len(items) == 0
+
+    def test_backend_gather_finds_legacy_rows_original_column_only(self):
+        """Regression test for #251: rows whose content lives only in the
+        original column (e.g. data predating modeltranslation, never passed
+        through update_translation_fields) must still be discovered."""
+        backend = ModeltranslationBackend(target_lang="nl")
+
+        article = Article.objects.create(title="Legacy Title", content="Legacy Content")
+        # Simulate legacy data: language columns empty, content only in the
+        # original columns (queryset.update() bypasses the descriptor sync)
+        Article.objects.filter(pk=article.pk).update(
+            title_en=None, title_de=None, content_en=None, content_de=None
+        )
+
+        items = backend.gather_translatable_content(
+            model_list=[Article], only_empty=True
+        )
+
+        by_field = {item["field"]: item["source_text"] for item in items}
+        assert by_field["title"] == "Legacy Title"
+        assert by_field["content"] == "Legacy Content"
+
+    def test_backend_language_columns_beat_original_column(self):
+        """An explicit language column takes priority over the original
+        column, which may hold a stale default-language mirror."""
+        backend = ModeltranslationBackend(target_lang="nl")
+
+        article = Article.objects.create(title="Stale original", content="c")
+        Article.objects.filter(pk=article.pk).update(
+            title_en=None, title_de="Deutscher Titel"
+        )
+
+        items = backend.gather_translatable_content(
+            model_list=[Article], only_empty=True
+        )
+
+        title_items = [i for i in items if i["field"] == "title"]
+        assert title_items[0]["source_text"] == "Deutscher Titel"
+
+    def test_backend_apply_translations_multiple_fields_same_row(self):
+        """Regression test for #251: gather returns a separate instance copy
+        per field for the same row; applying them together must not let one
+        copy's stale values clobber another copy's translation."""
+        backend = ModeltranslationBackend(target_lang="nl")
+
+        article = Article.objects.create(
+            title="Hello", content="World", description="Desc"
+        )
+
+        items = backend.gather_translatable_content(
+            model_list=[Article], only_empty=True
+        )
+        assert len(items) == 3
+
+        translation_items = [
+            {
+                "instance": item["instance"],
+                "target_field": item["target_field"],
+                "translation": f"NL {item['source_text']}",
+            }
+            for item in items
+        ]
+        updated = backend.apply_translations(translation_items, dry_run=False)
+        assert updated == 3
+
+        article.refresh_from_db()
+        assert article.title_nl == "NL Hello"
+        assert article.content_nl == "NL World"
+        assert article.description_nl == "NL Desc"
+
+    def test_backend_apply_translations_preserves_other_rows_fields(self):
+        """A bulk update for one row's fields must not write another row's
+        stale values for fields it wasn't translated for (e.g. a field
+        already translated in an earlier batch)."""
+        backend = ModeltranslationBackend(target_lang="nl")
+
+        a = Article.objects.create(title="A title", content="A content")
+        b = Article.objects.create(title="B title", content="B content")
+
+        # Instance copies as gather_translatable_content would produce them
+        a_copy = Article.objects.get(pk=a.pk)
+        b_copy = Article.objects.get(pk=b.pk)
+
+        # Simulate an earlier batch having already translated a.content_nl
+        Article.objects.filter(pk=a.pk).update(content_nl="Earlier translation")
+
+        backend.apply_translations(
+            [
+                {
+                    "instance": a_copy,
+                    "target_field": "title_nl",
+                    "translation": "NL A title",
+                },
+                {
+                    "instance": b_copy,
+                    "target_field": "content_nl",
+                    "translation": "NL B content",
+                },
+            ],
+            dry_run=False,
+        )
+
+        a.refresh_from_db()
+        b.refresh_from_db()
+        assert a.title_nl == "NL A title"
+        assert a.content_nl == "Earlier translation"  # not clobbered
+        assert b.content_nl == "NL B content"
 
     def test_backend_gather_skips_empty_first_source_lang(self):
         """Test that gather falls through to second source lang when first is empty."""
