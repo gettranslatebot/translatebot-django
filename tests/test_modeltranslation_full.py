@@ -209,6 +209,9 @@ class TestModeltranslationBackendWithDB:
             def rewrite(self, mode=True):
                 return self
 
+            def only(self, *fields):
+                return self
+
             def filter(self, *args, **kwargs):
                 return self
 
@@ -234,6 +237,9 @@ class TestModeltranslationBackendWithDB:
         # Fake queryset lacking rewrite(), as returned by a custom manager
         # whose get_queryset() doesn't use MultilingualQuerySet
         class FakeQuerySet:
+            def only(self, *fields):
+                return self
+
             def filter(self, *args, **kwargs):
                 return self
 
@@ -272,23 +278,23 @@ class TestModeltranslationBackendWithDB:
         assert by_field["content"]["source_text"] == "Legacy Content"
         # Legacy rows are marked for default-language backfill on save
         assert by_field["title"]["backfill_field"] == "title_en"
-        assert by_field["title"]["backfill_value"] == "Legacy Title"
 
-    def test_backend_original_column_fallback_skips_file_fields(self):
-        """The original column of a FileField holds a raw path string; it
-        must never be shipped to a translation provider (which would write
-        prose into file columns). Text fields still fall back."""
+    def test_backend_gather_skips_file_fields_entirely(self):
+        """Any FileField column — original or per-language — holds a raw
+        path string; none may ever be shipped to a translation provider
+        (which would write prose into file columns). Text fields still
+        fall back to the original column."""
         from tests.models import Document
 
         backend = ModeltranslationBackend(target_lang="nl")
 
         doc = Document.objects.create(name="Manual", attachment="docs/manual.pdf")
-        # Simulate legacy data: language columns empty, values only in the
-        # original columns
+        # Text language columns empty (legacy row); the per-language file
+        # column populated, as the descriptor sync produces on every save
         Document.objects.filter(pk=doc.pk).update(
             name_en=None,
             name_de=None,
-            attachment_en=None,
+            attachment_en="docs/manual.pdf",
             attachment_de=None,
         )
 
@@ -314,15 +320,7 @@ class TestModeltranslationBackendWithDB:
         title_item = next(i for i in items if i["field"] == "title")
 
         backend.apply_translations(
-            [
-                {
-                    "instance": title_item["instance"],
-                    "target_field": title_item["target_field"],
-                    "translation": "NL Titel",
-                    "backfill_field": title_item["backfill_field"],
-                    "backfill_value": title_item["backfill_value"],
-                }
-            ],
+            [{**title_item, "translation": "NL Titel"}],
             dry_run=False,
         )
 
@@ -359,7 +357,100 @@ class TestModeltranslationBackendWithDB:
         assert legacy.pk not in title_items
         assert title_items[dutch_only.pk]["source_text"] == "Alleen Nederlands"
 
-    def test_backend_original_column_used_at_default_language_position(self):
+    def test_backend_apply_syncs_original_column_at_default_language(self):
+        """Translating INTO the default language must also fill the original
+        column — the authoritative default-language store for raw SQL,
+        .values() and rewrite(False) consumers. Otherwise the row would
+        also be re-matched (and re-translated) on every overwrite run."""
+        backend = ModeltranslationBackend(target_lang="en")
+
+        article = Article.objects.create(title="tmp", content="c")
+        Article.objects.filter(pk=article.pk).rewrite(False).update(
+            title="", title_en=None, title_nl="Alleen Nederlands"
+        )
+
+        items = backend.gather_translatable_content(
+            model_list=[Article], only_empty=True
+        )
+        title_item = next(i for i in items if i["field"] == "title")
+
+        backend.apply_translations(
+            [{**title_item, "translation": "English Title"}],
+            dry_run=False,
+        )
+
+        assert (
+            Article.objects.filter(pk=article.pk)
+            .rewrite(False)
+            .values_list("title_en", flat=True)
+            .get()
+            == "English Title"
+        )
+        # The raw original column received the same value
+        assert (
+            Article.objects.filter(pk=article.pk)
+            .rewrite(False)
+            .values_list("title", flat=True)
+            .get()
+            == "English Title"
+        )
+
+    def test_backend_apply_backfill_field_requires_source_text(self):
+        """An item carrying backfill_field but no source_text is rejected
+        up front with a clear error instead of failing mid-apply."""
+        backend = ModeltranslationBackend(target_lang="nl")
+
+        article = Article.objects.create(title="Hello", content="World")
+
+        with pytest.raises(ValueError, match="missing source_text"):
+            backend.apply_translations(
+                [
+                    {
+                        "instance": article,
+                        "target_field": "title_nl",
+                        "translation": "Hallo",
+                        "backfill_field": "title_en",
+                    }
+                ],
+                dry_run=False,
+            )
+
+    def test_backend_gather_dedupes_duplicate_models(self):
+        """--models 'Article tests.Article' resolves to the same class twice;
+        gather must not emit every item twice."""
+        backend = ModeltranslationBackend(target_lang="nl")
+
+        Article.objects.create(title="Hello", content="World")
+
+        once = backend.gather_translatable_content(
+            model_list=[Article], only_empty=True
+        )
+        twice = backend.gather_translatable_content(
+            model_list=[Article, Article], only_empty=True
+        )
+        assert len(twice) == len(once)
+
+    def test_backend_apply_dry_run_matches_real_run_on_duplicates(self):
+        """Duplicate items for the same row and field collapse into one
+        write, and the dry-run count reports the same number."""
+        backend = ModeltranslationBackend(target_lang="nl")
+
+        article = Article.objects.create(title="Hello", content="World")
+        duplicated = [
+            {"instance": article, "target_field": "title_nl", "translation": "Hallo"},
+            {"instance": article, "target_field": "title_nl", "translation": "Hallo"},
+        ]
+
+        dry = backend.apply_translations(duplicated, dry_run=True)
+        real = backend.apply_translations(duplicated, dry_run=False)
+        assert dry == real == 1
+
+    def test_backend_apply_translations_empty_real_run(self):
+        """An empty item list is a no-op for a real run, not just dry-run."""
+        backend = ModeltranslationBackend(target_lang="nl")
+        assert backend.apply_translations([], dry_run=False) == 0
+
+    def test_backend_original_column_outranks_other_languages(self):
         """When the default-language column is empty, the original column is
         used in its place (mirroring update_translation_fields), so the
         default-language original outranks other languages' columns — which
@@ -378,7 +469,32 @@ class TestModeltranslationBackendWithDB:
         title_items = [i for i in items if i["field"] == "title"]
         assert title_items[0]["source_text"] == "Original English"
         assert title_items[0]["backfill_field"] == "title_en"
-        assert title_items[0]["backfill_value"] == "Original English"
+
+    def test_backend_default_language_preferred_regardless_of_lang_order(self):
+        """The default language must be the preferred source even when it
+        is not listed first in AVAILABLE_LANGUAGES (modeltranslation only
+        requires it to be IN the list): other columns may themselves be
+        machine translations."""
+        backend = ModeltranslationBackend(target_lang="nl")
+        # Simulate LANGUAGES listing the default ('en') after 'de'
+        # (modeltranslation's list is frozen at import, so patch the
+        # backend's copy)
+        backend.available_langs = ["de", "en", "nl"]
+
+        article = Article.objects.create(title="Original English", content="c")
+        Article.objects.filter(pk=article.pk).update(
+            title_en=None, title_de="Maschinell übersetzt"
+        )
+
+        items = backend.gather_translatable_content(
+            model_list=[Article], only_empty=True
+        )
+
+        title_items = [i for i in items if i["field"] == "title"]
+        # The pristine original-column English wins over the German column,
+        # and the legacy row is still marked for backfill
+        assert title_items[0]["source_text"] == "Original English"
+        assert title_items[0]["backfill_field"] == "title_en"
 
     def test_backend_apply_translations_multiple_fields_same_row(self):
         """Regression test for #251: gather returns a separate instance copy
