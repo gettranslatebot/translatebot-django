@@ -222,6 +222,34 @@ class TestModeltranslationBackendWithDB:
         )
         assert len(items) == 0
 
+    def test_backend_gather_handles_queryset_without_rewrite(self, mocker):
+        """A custom manager may return a plain QuerySet without
+        modeltranslation's rewrite(); gathering must still work."""
+        backend = ModeltranslationBackend(target_lang="nl")
+
+        article = Article.objects.create(
+            title="Plain QS Title", content="Plain QS Content"
+        )
+
+        # Fake queryset lacking rewrite(), as returned by a custom manager
+        # whose get_queryset() doesn't use MultilingualQuerySet
+        class FakeQuerySet:
+            def filter(self, *args, **kwargs):
+                return self
+
+            def __iter__(self):
+                return iter([article])
+
+        mocker.patch.object(Article.objects, "all", return_value=FakeQuerySet())
+
+        items = backend.gather_translatable_content(
+            model_list=[Article], only_empty=False
+        )
+
+        source_texts = {item["source_text"] for item in items}
+        assert "Plain QS Title" in source_texts
+        assert "Plain QS Content" in source_texts
+
     def test_backend_gather_finds_legacy_rows_original_column_only(self):
         """Regression test for #251: rows whose content lives only in the
         original column (e.g. data predating modeltranslation, never passed
