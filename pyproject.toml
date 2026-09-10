@@ -37,7 +37,11 @@ keywords = ["django", "translation", "i18n", "localization", "gettext", "po", "o
 dependencies = [
   "Django>=4.2,<7",
   "polib>=1.2.0,<2",
-  "litellm>=1.80.0,<2",
+  # litellm >= 1.98.0 fails to import on Python 3.10 (uses typing.NotRequired,
+  # which is 3.11+): https://github.com/BerriAI/litellm/issues/38076
+  # Drop the < 1.98 cap once that issue is fixed upstream.
+  "litellm>=1.80.0,<1.98; python_version < '3.11'",
+  "litellm>=1.80.0,<2; python_version >= '3.11'",
 ]
 
 [project.urls]
