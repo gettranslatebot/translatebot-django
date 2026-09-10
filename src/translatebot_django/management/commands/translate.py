@@ -932,13 +932,10 @@ class Command(BaseCommand):
                     batch_items = []
                     pairs = zip(items_group, translations, strict=True)
                     for item, translation in pairs:
-                        batch_items.append(
-                            {
-                                "instance": item["instance"],
-                                "target_field": item["target_field"],
-                                "translation": translation,
-                            }
-                        )
+                        # Pass the gathered item through whole: apply needs
+                        # field/source_text for original-column syncing on
+                        # top of instance/target_field/backfill_field.
+                        batch_items.append({**item, "translation": translation})
 
                         model_name = item["model"].__name__
                         field_name = item["field"]

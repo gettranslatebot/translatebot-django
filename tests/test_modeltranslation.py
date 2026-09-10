@@ -194,7 +194,8 @@ def test_gather_content_with_modeltranslation_languages(settings):
     """Test gathering content when MODELTRANSLATION_LANGUAGES is set."""
     from translatebot_django.backends.modeltranslation import ModeltranslationBackend
 
-    # Set MODELTRANSLATION_LANGUAGES (takes priority over LANGUAGES)
+    # The backend reads modeltranslation's import-time language list (the
+    # languages it created columns for); runtime overrides are ignored.
     settings.MODELTRANSLATION_LANGUAGES = ("en", "de", "nl")
 
     backend = ModeltranslationBackend(target_lang="nl")
@@ -213,7 +214,8 @@ def test_gather_content_without_languages_settings(settings):
     """Test gathering content without MODELTRANSLATION_LANGUAGES or LANGUAGES."""
     from translatebot_django.backends.modeltranslation import ModeltranslationBackend
 
-    # Remove both settings to test fallback
+    # Remove both settings at runtime; the backend keeps working because it
+    # uses modeltranslation's import-time language list
     if hasattr(settings, "MODELTRANSLATION_LANGUAGES"):
         delattr(settings, "MODELTRANSLATION_LANGUAGES")
     if hasattr(settings, "LANGUAGES"):
@@ -222,7 +224,6 @@ def test_gather_content_without_languages_settings(settings):
     backend = ModeltranslationBackend(target_lang="nl")
     items = backend.gather_translatable_content()
 
-    # Should use target_lang as fallback and return a list
     assert isinstance(items, list)
 
 
@@ -236,9 +237,6 @@ def test_gather_content_no_source_languages(settings):
     from tests.models import Article
     from translatebot_django.backends.modeltranslation import ModeltranslationBackend
 
-    # Set LANGUAGES to only include the target language
-    settings.LANGUAGES = [("nl", "Dutch")]
-
     # Create an article with some content
     Article.objects.create(
         title="Test Title",
@@ -246,8 +244,12 @@ def test_gather_content_no_source_languages(settings):
     )
 
     backend = ModeltranslationBackend(target_lang="nl")
+    # Simulate a setup where the only available language is the target
+    # (modeltranslation's language list is frozen at import, so patch the
+    # backend's copy)
+    backend.available_langs = ["nl"]
     items = backend.gather_translatable_content()
 
     # Should return empty list because there are no source languages
     # (all available languages == target language, so source_langs is empty)
-    assert isinstance(items, list)
+    assert items == []
