@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-09-10
+
+### Fixed
+
+- modeltranslation backend: rows created before modeltranslation was installed (or written via `queryset.update()` / imports) were invisible to translation discovery, because only the language-suffixed columns were queried. The original column is now included as a default-language source, with explicit language columns still taking priority over a stale original mirror.
+- modeltranslation backend: translations no longer clobber each other when a row has multiple translated fields. `bulk_update` received one instance copy per translated field with duplicate pks, so only the first field per row per batch survived; instances are now consolidated per row and updated grouped by their exact set of translated fields.
+- A `FileField`'s original column is never used as a translation source.
+- Capped litellm below 1.98 on Python 3.10 to fix an import error.
+
+### Changed
+
+- Updated Django from 5.2.14 to 5.2.17
+- Updated aiohttp from 3.13.4 to 3.14.3
+- Updated sqlparse from 0.5.5 to 0.6.0
+- Updated litellm, ruff, pytest, and pytest-django
+- Refreshed `uv.lock` with latest compatible versions
+
 ## [1.3.2] - 2026-05-24
 
 ### Changed
@@ -433,6 +450,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[1.3.3]: https://github.com/gettranslatebot/translatebot-django/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/gettranslatebot/translatebot-django/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/gettranslatebot/translatebot-django/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/gettranslatebot/translatebot-django/compare/v1.2.0...v1.3.0
