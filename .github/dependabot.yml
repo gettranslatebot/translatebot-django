@@ -13,6 +13,12 @@ updates:
       - "dependencies"
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # litellm is capped per Python version (see pyproject.toml) while
+      # https://github.com/BerriAI/litellm/issues/38076 is unfixed; dependabot
+      # cannot resolve the marker split, so bump litellm manually with
+      # `uv lock --upgrade-package litellm` and remove this once fixed.
+      - dependency-name: "litellm"
     groups:
       minor-and-patch:
         patterns: ["*"]
