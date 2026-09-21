@@ -8,7 +8,9 @@ class LiteLLMProvider(TranslationProvider):
         self._model = model
         self._api_key = api_key
 
-    def translate(self, texts, target_lang, context=None, comments=None):
+    def translate(
+        self, texts, target_lang, context=None, comments=None, source_lang=None
+    ):
         from translatebot_django.management.commands.translate import translate_text
 
         return translate_text(

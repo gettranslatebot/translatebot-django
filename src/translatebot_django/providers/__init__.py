@@ -7,7 +7,9 @@ class TranslationProvider(ABC):
     """Abstract base class for translation providers."""
 
     @abstractmethod
-    def translate(self, texts, target_lang, context=None, comments=None):
+    def translate(
+        self, texts, target_lang, context=None, comments=None, source_lang=None
+    ):
         """Translate a batch of texts to the target language.
 
         Args:
@@ -16,6 +18,9 @@ class TranslationProvider(ABC):
             context: Optional translation context from TRANSLATING.md.
             comments: Optional dict mapping source strings to developer
                       comments extracted from PO files (#. lines).
+            source_lang: Optional language code the texts are written in,
+                         when known for certain (e.g. a modeltranslation
+                         language column). Providers may ignore it.
 
         Returns:
             List of translated strings, same length as texts.

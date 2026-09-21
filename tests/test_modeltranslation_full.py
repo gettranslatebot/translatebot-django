@@ -594,3 +594,84 @@ class TestModeltranslationBackendWithDB:
         source_texts = [item["source_text"] for item in items]
         assert "Deutscher Titel" in source_texts
         assert "Deutscher Inhalt" in source_texts
+
+    def test_backend_normalize_translation_slugifies_slug_fields(self):
+        """Providers translate a slug as prose; it must be stored as a slug
+        again (issue #251)."""
+        from tests.models import Page
+
+        backend = ModeltranslationBackend(target_lang="nl")
+
+        result = backend.normalize_translation(
+            Page, "slug", "My Beautiful House", "moja-lijepa-kuca"
+        )
+
+        assert result == "my-beautiful-house"
+
+    def test_backend_normalize_translation_leaves_other_fields_alone(self):
+        """Only slug fields are rewritten."""
+        from tests.models import Page
+
+        backend = ModeltranslationBackend(target_lang="nl")
+
+        result = backend.normalize_translation(
+            Page, "title", "My Beautiful House", "Moja lijepa kuća"
+        )
+
+        assert result == "My Beautiful House"
+
+    def test_backend_normalize_translation_truncates_slug_to_max_length(self):
+        """A translation longer than the slug's max_length is cut, without
+        leaving a dangling separator."""
+        from tests.models import Page
+
+        backend = ModeltranslationBackend(target_lang="nl")
+
+        result = backend.normalize_translation(
+            Page, "slug", "my beautiful little houses by the sea", "kuca"
+        )
+
+        # "my-beautiful-little-houses-by-the-sea"[:30] ends in "-", stripped
+        assert result == "my-beautiful-little-houses-by"
+        assert len(result) <= Page._meta.get_field("slug").max_length
+
+    def test_backend_normalize_translation_truncates_slug_at_word_boundary(self):
+        """A cut that lands mid-word drops the partial word; a single word
+        longer than max_length can only be cut hard."""
+        from tests.models import Page
+
+        backend = ModeltranslationBackend(target_lang="nl")
+
+        mid_word = backend.normalize_translation(
+            Page, "slug", "my beautiful little house by the sea", "kuca"
+        )
+        one_word = backend.normalize_translation(Page, "slug", "a" * 40, "kuca")
+
+        # [:30] would give "my-beautiful-little-house-by-t"
+        assert mid_word == "my-beautiful-little-house-by"
+        assert one_word == "a" * 30
+
+    def test_backend_normalize_translation_respects_allow_unicode(self):
+        """Non-ASCII characters survive only in allow_unicode slug fields."""
+        from tests.models import Page
+
+        backend = ModeltranslationBackend(target_lang="nl")
+
+        ascii_slug = backend.normalize_translation(Page, "slug", "Schöne Küche", "x")
+        unicode_slug = backend.normalize_translation(
+            Page, "unicode_slug", "Schöne Küche", "x"
+        )
+
+        assert ascii_slug == "schone-kuche"
+        assert unicode_slug == "schöne-küche"
+
+    def test_backend_normalize_translation_falls_back_to_source_slug(self):
+        """When nothing sluggable is left (non-Latin translation in an
+        ASCII-only slug field), the source slug is kept over an empty value."""
+        from tests.models import Page
+
+        backend = ModeltranslationBackend(target_lang="nl")
+
+        result = backend.normalize_translation(Page, "slug", "美しい家", "lijepa-kuca")
+
+        assert result == "lijepa-kuca"

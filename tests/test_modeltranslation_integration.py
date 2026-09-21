@@ -366,3 +366,68 @@ def test_translate_command_models_sets_stats(settings, mock_env_api_key, mocker)
     assert stats["model_fields_translated"] == 2
     assert stats["strings_found"] == 0
     assert stats["target_langs"] == ["nl"]
+
+
+@pytest.mark.django_db
+def test_translate_command_models_slugifies_slug_fields(
+    settings, mock_env_api_key, mocker
+):
+    """A slug translated as prose is saved as a slug again (issue #251)."""
+    from tests.models import Page
+
+    settings.TRANSLATEBOT_MODEL = "gpt-4o-mini"
+
+    page = Page.objects.create(title="Kuća", slug="moja-lijepa-kuca")
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.translate_text",
+        side_effect=lambda text, **_kwargs: [
+            {"Kuća": "House", "moja-lijepa-kuca": "My beautiful house"}[t] for t in text
+        ],
+    )
+
+    out = StringIO()
+    call_command("translate", target_lang="nl", models=["Page"], stdout=out)
+
+    page.refresh_from_db()
+    assert page.slug_nl == "my-beautiful-house"
+    assert page.title_nl == "House"
+    assert "'moja-lijepa-kuca' → 'my-beautiful-house'" in out.getvalue()
+
+
+@pytest.mark.django_db
+def test_translate_command_models_passes_source_lang_per_batch(
+    settings, mock_env_api_key, mocker
+):
+    """Each provider request carries the language its texts are written in;
+    rows sourced from different languages never share a request."""
+    from tests.models import Page
+
+    settings.TRANSLATEBOT_PROVIDER = "deepl"
+
+    Page.objects.create(title="House", slug="house")
+    german_only = Page.objects.create(title="x", slug="x")
+    # rewrite(False): blank the original columns too, not just the _en ones
+    Page.objects.rewrite(False).filter(pk=german_only.pk).update(
+        title="", title_en="", title_de="Haus", slug="", slug_en="", slug_de="haus"
+    )
+
+    provider = mocker.MagicMock()
+    provider.name = "DeepL"
+    provider.supports_context = False
+    provider.batch.side_effect = lambda texts, _lang: [texts]
+    provider.translate.side_effect = lambda texts, *_args, **_kwargs: [
+        f"nl-{t}" for t in texts
+    ]
+    mocker.patch(
+        "translatebot_django.management.commands.translate.get_provider",
+        return_value=provider,
+    )
+
+    call_command("translate", target_lang="nl", models=["Page"], stdout=StringIO())
+
+    calls = {
+        c.kwargs["source_lang"]: sorted(c.args[0])
+        for c in provider.translate.call_args_list
+    }
+    assert calls == {"en": ["House", "house"], "de": ["Haus", "haus"]}

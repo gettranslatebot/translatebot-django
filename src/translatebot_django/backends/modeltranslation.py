@@ -4,7 +4,8 @@ from collections import defaultdict
 
 from django.apps import apps
 from django.db import transaction
-from django.db.models import F, FileField, Q
+from django.db.models import F, FileField, Q, SlugField
+from django.utils.text import slugify
 
 
 def _q_has_content(field):
@@ -81,6 +82,40 @@ class ModeltranslationBackend:
             str: Target language field name (e.g., 'title_nl')
         """
         return self._localized_fieldname(field_name, self.target_lang)
+
+    def normalize_translation(self, model, field_name, translation, source_text):
+        """
+        Make a provider's translation valid for the field it is written to.
+
+        Providers translate a slug as prose ("moja-kuca" -> "my house"), so
+        a SlugField's translation is slugified again and cut to the field's
+        max_length at a word boundary.
+
+        Args:
+            model: Django model class
+            field_name: Source field name (e.g., 'slug')
+            translation: Translated text returned by the provider
+            source_text: Text the translation was made from
+
+        Returns:
+            str: Translation to store in the target field
+        """
+        field = model._meta.get_field(field_name)
+        if not isinstance(field, SlugField):
+            return translation
+
+        slug = slugify(translation, allow_unicode=field.allow_unicode)
+        max_length = field.max_length
+        if max_length and len(slug) > max_length:
+            # Cut at a word boundary rather than mid-word ("…-by-t")
+            cut_mid_word = slug[max_length] != "-"
+            slug = slug[:max_length]
+            if cut_mid_word and "-" in slug:
+                slug = slug.rsplit("-", 1)[0]
+            slug = slug.rstrip("-_")
+        # Nothing sluggable survives when e.g. a non-Latin translation meets
+        # an ASCII-only SlugField; the source slug is at least a valid one.
+        return slug or source_text
 
     def parse_model_names(self, model_names):
         """
@@ -172,6 +207,7 @@ class ModeltranslationBackend:
                 - field: Source field name
                 - target_field: Target language field name
                 - source_text: Text to translate
+                - source_lang: Language code of the source text
                 - backfill_field: Default-language field name to sync with
                   the source text when translations are applied (or None)
         """
@@ -244,6 +280,7 @@ class ModeltranslationBackend:
                     # default-language value for rows never saved through
                     # the modeltranslation descriptor.
                     source_text = None
+                    source_lang = None
                     backfill_field = None
                     for lang, lang_field in zip(source_langs, lang_fields, strict=True):
                         text = getattr(instance, lang_field, None)
@@ -259,6 +296,7 @@ class ModeltranslationBackend:
                                 backfill_field = lang_field
                         if text:  # Found a populated source field
                             source_text = text
+                            source_lang = lang
                             break
 
                     if source_text:
@@ -269,6 +307,7 @@ class ModeltranslationBackend:
                                 "field": field_name,
                                 "target_field": target_field,
                                 "source_text": str(source_text),
+                                "source_lang": source_lang,
                                 "backfill_field": backfill_field,
                             }
                         )
