@@ -14,6 +14,7 @@ from translatebot_django.providers.deepl import (
     DeepLProvider,
     _replace_placeholders_with_emails,
     _restore_email_placeholders,
+    django_to_deepl_source,
     django_to_deepl_target,
 )
 from translatebot_django.providers.litellm import LiteLLMProvider
@@ -219,6 +220,7 @@ def test_deepl_translate_basic(mocker):
 
     provider._translator.translate_text.assert_called_once_with(
         ["Hello", "World"],
+        source_lang=None,
         target_lang="DE",
         preserve_formatting=True,
         tag_handling="html",
@@ -264,6 +266,7 @@ def test_deepl_translate_uses_mapped_lang(mocker):
 
     provider._translator.translate_text.assert_called_once_with(
         ["Hi"],
+        source_lang=None,
         target_lang="EN-US",
         preserve_formatting=True,
         tag_handling="html",
@@ -532,3 +535,103 @@ def test_deepl_import_guard_raises_error(monkeypatch):
         if original:
             sys.modules["deepl"] = original
         sys.modules.pop("translatebot_django.providers.deepl", None)
+
+
+def _deepl_provider_returning(raw_translations):
+    """DeepLProvider whose API call returns the given texts."""
+    provider = DeepLProvider(api_key="test-key")
+    mock_results = []
+    for text in raw_translations:
+        m = MagicMock()
+        m.text = text
+        mock_results.append(m)
+    provider._translator.translate_text = MagicMock(return_value=mock_results)
+    return provider
+
+
+def test_deepl_translate_restores_all_caps():
+    """DeepL's newer models drop all-caps casing; it is restored when the
+    source text is written in all caps (issue #251)."""
+    sources = [
+        "STAN NA PRODAJU",  # all caps -> restored
+        "NOVOGRADNJA",  # single long all-caps word -> restored
+        "Stan na prodaju",  # regular casing -> untouched
+        "Prodaje se STAN u centru",  # partly caps -> untouched
+    ]
+    provider = _deepl_provider_returning(
+        [
+            "Apartment for sale",
+            "New Construction",
+            "Apartment for sale",
+            "Apartment for sale in the center",
+        ]
+    )
+
+    result = provider.translate(sources, "en")
+
+    assert result == [
+        "APARTMENT FOR SALE",
+        "NEW CONSTRUCTION",
+        "Apartment for sale",
+        "Apartment for sale in the center",
+    ]
+
+
+def test_deepl_translate_all_caps_leaves_short_acronyms_alone():
+    """A single short all-caps word is likely an acronym whose translation
+    must keep its own casing."""
+    provider = _deepl_provider_returning(["Häufig gestellte Fragen", "Gut", "123"])
+
+    result = provider.translate(["FAQ", "OK", "123"], "de")
+
+    assert result == ["Häufig gestellte Fragen", "Gut", "123"]
+
+
+def test_deepl_translate_all_caps_keeps_tags_entities_and_placeholders():
+    """Restoring all caps must not uppercase HTML tags, entities or format
+    placeholders."""
+    sources = [
+        '<p class="lead">STAN NA PRODAJU</p>',
+        "DOBRODOŠLI %(name)s U {city}",
+        "KUPI &amp; PRODAJ STAN",
+    ]
+    provider = _deepl_provider_returning(
+        [
+            '<p class="lead">Apartment for sale</p>',
+            "Welcome ph0@tb.x to ph1@tb.x",
+            "Buy &amp; sell apartment",
+        ]
+    )
+
+    result = provider.translate(sources, "en")
+
+    assert result == [
+        '<p class="lead">APARTMENT FOR SALE</p>',
+        "WELCOME %(name)s TO {city}",
+        "BUY &amp; SELL APARTMENT",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("django_code", "deepl_code"),
+    [("hr", "HR"), ("en-us", "EN"), ("pt-br", "PT"), ("zh-hans", "ZH")],
+)
+def test_django_to_deepl_source(django_code, deepl_code):
+    """DeepL source languages carry no regional variant."""
+    assert django_to_deepl_source(django_code) == deepl_code
+
+
+def test_deepl_translate_passes_source_lang():
+    """A known source language is sent along, so DeepL doesn't have to
+    detect it per text (issue #251)."""
+    provider = _deepl_provider_returning(["Apartment"])
+
+    provider.translate(["Stan"], "en", source_lang="hr")
+
+    provider._translator.translate_text.assert_called_once_with(
+        ["Stan"],
+        source_lang="HR",
+        target_lang="EN-US",
+        preserve_formatting=True,
+        tag_handling="html",
+    )

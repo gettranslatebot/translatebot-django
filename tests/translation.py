@@ -2,7 +2,7 @@
 
 from modeltranslation.translator import TranslationOptions, register
 
-from .models import Article, Document, Product
+from .models import Article, Document, Page, Product
 
 
 @register(Article)
@@ -18,3 +18,8 @@ class ProductTranslationOptions(TranslationOptions):
 @register(Document)
 class DocumentTranslationOptions(TranslationOptions):
     fields = ("name", "attachment")
+
+
+@register(Page)
+class PageTranslationOptions(TranslationOptions):
+    fields = ("title", "slug", "unicode_slug")

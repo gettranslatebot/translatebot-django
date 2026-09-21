@@ -41,3 +41,17 @@ class Document(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class Page(models.Model):
+    """Test model with translated slug fields."""
+
+    title = models.CharField(max_length=100)
+    slug = models.SlugField(max_length=30)
+    unicode_slug = models.SlugField(max_length=30, allow_unicode=True, blank=True)
+
+    class Meta:
+        app_label = "tests"
+
+    def __str__(self):
+        return self.title

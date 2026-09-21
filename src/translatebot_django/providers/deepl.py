@@ -71,6 +71,39 @@ def _restore_email_placeholders(text, originals):
     return _EMAIL_PH_RE.sub(_sub, text)
 
 
+# DeepL's newer models (Croatian, Serbian, …) rewrite all-caps text in
+# sentence/title case ("STAN NA PRODAJU" -> "Apartment for sale"), regardless
+# of preserve_formatting or tag_handling.  The casing is restored afterwards,
+# leaving tags, entities and placeholder tokens untouched.
+#
+# See: https://github.com/gettranslatebot/translatebot-django/issues/251
+_CASE_PROTECTED_RE = re.compile(
+    r"(<[^>]+>|&(?:#\d+|#x[\da-fA-F]+|[a-zA-Z]+);|ph\d+@tb\.x)"
+)
+
+# A single short all-caps word is more likely an acronym ("FAQ", "OK") whose
+# translation must not be uppercased ("Häufig gestellte Fragen").
+_MIN_ALL_CAPS_WORD_LENGTH = 6
+
+
+def _is_all_caps(text):
+    """Whether the translatable part of ``text`` is written in all caps."""
+    plain = _CASE_PROTECTED_RE.sub(" ", text)
+    if not plain.isupper():
+        return False
+    words = [w for w in plain.split() if any(c.isalpha() for c in w)]
+    if len(words) > 1:
+        return True
+    return sum(c.isalpha() for c in plain) >= _MIN_ALL_CAPS_WORD_LENGTH
+
+
+def _uppercase_text(text):
+    """Uppercase ``text`` except for tags, entities and placeholder tokens."""
+    parts = _CASE_PROTECTED_RE.split(text)
+    # re.split with one capturing group alternates text / protected match
+    return "".join(p if i % 2 else p.upper() for i, p in enumerate(parts))
+
+
 def django_to_deepl_target(lang_code):
     """Convert a Django language code to a DeepL target language code.
 
@@ -88,6 +121,19 @@ def django_to_deepl_target(lang_code):
     # Django uses lowercase with hyphens (e.g. 'pt-br', 'zh-hans')
     # DeepL uses uppercase with hyphens (e.g. 'PT-BR', 'ZH-HANS')
     return lang_code.upper()
+
+
+def django_to_deepl_source(lang_code):
+    """Convert a Django language code to a DeepL source language code.
+
+    DeepL source languages carry no regional variant.
+
+    Examples:
+        'hr' -> 'HR'
+        'en-us' -> 'EN'
+        'zh-hans' -> 'ZH'
+    """
+    return lang_code.split("-")[0].upper()
 
 
 def _get_deepl_module():
@@ -110,8 +156,14 @@ class DeepLProvider(TranslationProvider):
         self._deepl = _get_deepl_module()
         self._translator = self._deepl.Translator(api_key)
 
-    def translate(self, texts, target_lang, context=None, comments=None):
+    def translate(
+        self, texts, target_lang, context=None, comments=None, source_lang=None
+    ):
         deepl_lang = django_to_deepl_target(target_lang)
+        # Without it DeepL detects the language per text, and short strings
+        # are often misdetected (Croatian as Serbian or Slovenian), which
+        # routes them to a different model.
+        deepl_source = django_to_deepl_source(source_lang) if source_lang else None
 
         prepared = []
         originals_per_text = []
@@ -123,6 +175,7 @@ class DeepLProvider(TranslationProvider):
         try:
             results = self._translator.translate_text(
                 prepared,
+                source_lang=deepl_source,
                 target_lang=deepl_lang,
                 preserve_formatting=True,
                 tag_handling="html",
@@ -148,8 +201,15 @@ class DeepLProvider(TranslationProvider):
             raise CommandError(f"DeepL API error: {e}") from e
 
         translations = []
-        for r, orig, src in zip(results, originals_per_text, texts, strict=True):
-            translated = _restore_email_placeholders(r.text, orig)
+        for r, orig, src, sent in zip(
+            results, originals_per_text, texts, prepared, strict=True
+        ):
+            translated = r.text
+            # Checked on the prepared text so placeholder names such as
+            # %(name)s don't count as lowercase content.
+            if _is_all_caps(sent):
+                translated = _uppercase_text(translated)
+            translated = _restore_email_placeholders(translated, orig)
             # Only unescape entities that DeepL added (tag_handling="html"
             # encodes plain < > & as entities).  If the source already
             # contains HTML entities they are intentional and must stay.

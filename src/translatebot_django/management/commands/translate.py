@@ -899,17 +899,25 @@ class Command(BaseCommand):
         for model_name, count in by_model.items():
             self.stdout.write(f"  • {model_name}: {count} field(s)")
 
-        # Batch the source texts using the provider's batching strategy
-        source_texts = [item["source_text"] for item in items]
-        text_batches = provider.batch(source_texts, target_lang)
+        # A batch is one provider request with a single source language, so
+        # items are split per source language first (rows missing the
+        # default-language text fall back to another language's column).
+        items_by_source_lang = {}
+        for item in items:
+            items_by_source_lang.setdefault(item.get("source_lang"), []).append(item)
 
-        # Re-associate batched texts with their items
         groups = []
-        item_idx = 0
-        for text_batch in text_batches:
-            batch_items = items[item_idx : item_idx + len(text_batch)]
-            groups.append((text_batch, batch_items))
-            item_idx += len(text_batch)
+        for lang_items in items_by_source_lang.values():
+            # Batch the source texts using the provider's batching strategy
+            source_texts = [item["source_text"] for item in lang_items]
+            text_batches = provider.batch(source_texts, target_lang)
+
+            # Re-associate batched texts with their items
+            item_idx = 0
+            for text_batch in text_batches:
+                batch_items = lang_items[item_idx : item_idx + len(text_batch)]
+                groups.append((text_batch, batch_items))
+                item_idx += len(text_batch)
 
         # Translate all groups
         if dry_run:
@@ -926,12 +934,21 @@ class Command(BaseCommand):
             with handle_api_errors():
                 for batch_num, (texts_group, items_group) in enumerate(groups, 1):
                     translations = provider.translate(
-                        texts_group, target_lang, context=context
+                        texts_group,
+                        target_lang,
+                        context=context,
+                        source_lang=items_group[0].get("source_lang"),
                     )
 
                     batch_items = []
                     pairs = zip(items_group, translations, strict=True)
                     for item, translation in pairs:
+                        translation = backend.normalize_translation(
+                            item["model"],
+                            item["field"],
+                            translation,
+                            item["source_text"],
+                        )
                         # Pass the gathered item through whole: apply needs
                         # field/source_text for original-column syncing on
                         # top of instance/target_field/backfill_field.
