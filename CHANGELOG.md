@@ -5,13 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.4] - 2026-09-21
 
 ### Fixed
 
 - modeltranslation backend: a translated `SlugField` is stored as a slug again. Providers translate a slug as prose (`moja-lijepa-kuca` → `My beautiful house`); the result is now slugified (honouring `allow_unicode`) and cut to the field's `max_length` at a word boundary.
 - DeepL: the source language of modeltranslation fields is now sent along instead of being auto-detected per text. Short strings were often misdetected (Croatian as Serbian or Slovenian), giving inconsistent results within one run. Rows sourced from different language columns are translated in separate requests.
 - DeepL: all-caps text keeps its casing. DeepL's newer models (Croatian, Serbian, …) rewrite `STAN NA PRODAJU` as `Apartment for sale`; the casing is now restored without touching HTML tags, entities or format placeholders. A single short all-caps word (`FAQ`, `OK`) is treated as an acronym and left as translated.
+
+### Changed
+
+- Updated ruff from 0.16.6 to 0.16.8
 
 ## [1.3.3] - 2026-09-10
 
@@ -458,6 +462,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[1.3.4]: https://github.com/gettranslatebot/translatebot-django/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/gettranslatebot/translatebot-django/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/gettranslatebot/translatebot-django/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/gettranslatebot/translatebot-django/compare/v1.3.0...v1.3.1
