@@ -71,7 +71,8 @@ INSTALLED_APPS = [
 LANGUAGES = [("en", "English"), ("nl", "Dutch"), ("de", "German")]
 
 TRANSLATEBOT_API_KEY = os.getenv("TRANSLATEBOT_API_KEY")
-TRANSLATEBOT_MODEL = "gpt-4o-mini"  # the default; any LiteLLM model works, e.g. "claude-sonnet-5"
+# The default; any LiteLLM model works, e.g. "claude-sonnet-5"
+TRANSLATEBOT_MODEL = "gpt-4o-mini"
 ```
 
 The API key must belong to the provider of `TRANSLATEBOT_MODEL`.
