@@ -35,13 +35,30 @@ def get_timeout():
     return timeout
 
 
+def _clean_api_key(value):
+    """Return the key without surrounding whitespace, or None if it's blank.
+
+    Settings like ``env("TRANSLATEBOT_API_KEY", default="")`` yield an empty
+    string when the variable is unset; sending that as ``Bearer `` gives a
+    confusing provider error instead of a configuration error.
+    """
+    if isinstance(value, str):
+        value = value.strip()
+    return value or None
+
+
 def get_api_key():
-    """Get the API key from the Django settings or an environment variable."""
+    """Get the API key from the Django settings or an environment variable.
+
+    A blank value (None, or an empty or whitespace-only string) counts as
+    not configured, so a blank setting falls back to the environment
+    variable.
+    """
     # Try Django settings first
-    api_key = getattr(settings, "TRANSLATEBOT_API_KEY", None)
+    api_key = _clean_api_key(getattr(settings, "TRANSLATEBOT_API_KEY", None))
 
     if api_key is None:
-        api_key = os.getenv("TRANSLATEBOT_API_KEY", None)
+        api_key = _clean_api_key(os.getenv("TRANSLATEBOT_API_KEY"))
 
     if api_key is None:
         raise CommandError(

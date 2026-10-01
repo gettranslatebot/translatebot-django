@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A blank `TRANSLATEBOT_API_KEY` (an empty or whitespace-only string, e.g. from `env("TRANSLATEBOT_API_KEY", default="")`) is treated as not configured: it falls back to the environment variable, or stops with "API key not configured". It used to be sent as an empty `Bearer` token, which failed as a misleading server error after two retries. Surrounding whitespace is stripped from the key. If you set an empty key for a provider that needs none (e.g. a local Ollama server), use any placeholder value instead, such as `"unused"`.
+
 ## [1.4.0] - 2026-10-01
 
 ### Added
