@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - PO files: a message shared by several files (e.g. `django.po` and `djangojs.po`, or several apps) is sent for translation once. `strings_found` / "Found N untranslated entries" now counts distinct messages; a plural message counts once.
+- The "Found N untranslated entries" and "Translating with …" lines are printed before translation starts instead of after all batches finished.
 
 ## [1.3.4] - 2026-09-21
 

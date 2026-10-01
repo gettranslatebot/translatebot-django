@@ -942,80 +942,20 @@ class Command(BaseCommand):
             effective = combine_translation_contexts(context, app_ctx)
             context_groups[effective].append(po_path)
 
-        # Process each context group
-        translations = {}  # (msgctxt, msgid) -> str, or list of plural forms
-        plural_aware = provider.supports_plural_forms
-        total_msgids = 0
-
+        # Gather the messages of each context group; a message shared by
+        # several files is translated once
+        work = []  # (effective_context, group_po_paths, units)
         for effective_context, group_po_paths in context_groups.items():
-            # A message shared by several files is translated once
             units = {}
             for po_path in group_po_paths:
                 for unit in gather_entries(po_path, include_translated=overwrite):
                     known = units.setdefault(unit.key, unit)
                     if known is not unit and unit.comment:
                         known.comment = unit.comment
+            if units:
+                work.append((effective_context, group_po_paths, list(units.values())))
 
-            units = list(units.values())
-            total_msgids += len(units)
-
-            if not units:
-                continue
-
-            if dry_run:
-                for unit in units:
-                    translations[unit.key] = ""
-                continue
-
-            # Flatten to provider texts, remembering which slice of them
-            # belongs to which message (a message may span two texts).
-            texts = []
-            text_comments = []
-            spans = []
-            for unit in units:
-                start = len(texts)
-                for text in unit.provider_texts(plural_aware):
-                    texts.append(text)
-                    text_comments.append(unit.comment)
-                spans.append((start, len(texts)))
-
-            groups = provider.batch(texts, target_lang, comments=text_comments)
-
-            with handle_api_errors():
-                results = []
-                done = 0
-                for batch_num, group in enumerate(groups, 1):
-                    start = len(results)
-                    batch_comments = text_comments[start : start + len(group)]
-                    translated = provider.translate(
-                        texts=group,
-                        target_lang=target_lang,
-                        context=effective_context,
-                        comments=batch_comments if any(batch_comments) else None,
-                    )
-                    if len(translated) != len(group):
-                        raise TranslationValidationError(
-                            f"{provider.name} returned {len(translated)} "
-                            f"translations, expected {len(group)}."
-                        )
-                    results.extend(translated)
-
-                    # Record every message whose texts are now all translated
-                    while done < len(units) and spans[done][1] <= len(results):
-                        unit_start, unit_end = spans[done]
-                        translations[units[done].key] = units[done].translation_from(
-                            results[unit_start:unit_end]
-                        )
-                        done += 1
-
-                    # Save PO files after each batch so translations
-                    # aren't lost if a later batch fails
-                    self._save_po_translations(
-                        group_po_paths,
-                        translations,
-                        overwrite=overwrite,
-                    )
-                    self.stdout.write(f"  💾 Saved batch {batch_num}/{len(groups)}")
+        total_msgids = sum(len(units) for _, _, units in work)
 
         # Early return with minimal output if nothing to translate
         if total_msgids == 0:
@@ -1039,10 +979,24 @@ class Command(BaseCommand):
 
         self.stdout.write(f"ℹ️  Found {total_msgids} untranslated entries")
 
+        translations = {}  # (msgctxt, msgid) -> str, or list of plural forms
         if dry_run:
             self.stdout.write("🔍 Dry run mode: skipping translation")
+            for _, _, units in work:
+                for unit in units:
+                    translations[unit.key] = ""
         else:
             self.stdout.write(f"🔄 Translating with {provider.name}...")
+            for effective_context, group_po_paths, units in work:
+                self._translate_po_units(
+                    units,
+                    group_po_paths,
+                    translations,
+                    target_lang=target_lang,
+                    provider=provider,
+                    context=effective_context,
+                    overwrite=overwrite,
+                )
 
         # Report what was translated and save PO files for dry-run
         total_changed = 0
@@ -1093,6 +1047,59 @@ class Command(BaseCommand):
             "strings_translated": total_changed,
             "po_files": len(po_paths),
         }
+
+    def _translate_po_units(
+        self, units, po_paths, translations, target_lang, provider, context, overwrite
+    ):
+        """Translate *units* in batches, saving *po_paths* after each batch.
+
+        Adds each translation to *translations*, keyed by ``(msgctxt, msgid)``.
+        """
+        # Flatten to provider texts, remembering which slice of them
+        # belongs to which message (a message may span two texts).
+        texts = []
+        text_comments = []
+        spans = []
+        for unit in units:
+            start = len(texts)
+            for text in unit.provider_texts(provider.supports_plural_forms):
+                texts.append(text)
+                text_comments.append(unit.comment)
+            spans.append((start, len(texts)))
+
+        groups = provider.batch(texts, target_lang, comments=text_comments)
+
+        with handle_api_errors():
+            results = []
+            done = 0
+            for batch_num, group in enumerate(groups, 1):
+                start = len(results)
+                batch_comments = text_comments[start : start + len(group)]
+                translated = provider.translate(
+                    texts=group,
+                    target_lang=target_lang,
+                    context=context,
+                    comments=batch_comments if any(batch_comments) else None,
+                )
+                if len(translated) != len(group):
+                    raise TranslationValidationError(
+                        f"{provider.name} returned {len(translated)} "
+                        f"translations, expected {len(group)}."
+                    )
+                results.extend(translated)
+
+                # Record every message whose texts are now all translated
+                while done < len(units) and spans[done][1] <= len(results):
+                    unit_start, unit_end = spans[done]
+                    translations[units[done].key] = units[done].translation_from(
+                        results[unit_start:unit_end]
+                    )
+                    done += 1
+
+                # Save PO files after each batch so translations
+                # aren't lost if a later batch fails
+                self._save_po_translations(po_paths, translations, overwrite=overwrite)
+                self.stdout.write(f"  💾 Saved batch {batch_num}/{len(groups)}")
 
     def _translate_model_fields(
         self,

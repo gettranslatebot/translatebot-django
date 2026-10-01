@@ -505,3 +505,20 @@ def test_command_rate_limit_exhausted_is_command_error(sample_po_file, mocker):
 
     with pytest.raises(CommandError, match="Rate limit still exceeded after 5"):
         call_command("translate", target_lang="nl")
+
+
+@pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
+def test_command_reports_summary_before_translating(sample_po_file, mock_completion):
+    from io import StringIO
+
+    mock_completion("Vertaald")
+    out = StringIO()
+    call_command("translate", target_lang="nl", stdout=out)
+
+    output = out.getvalue()
+    assert (
+        output.index("Found 2 untranslated entries")
+        < output.index("Translating with gpt-4o-mini")
+        < output.index("Saved batch 1/1")
+        < output.index("Processing:")
+    )
