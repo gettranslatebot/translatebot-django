@@ -6,6 +6,7 @@ the translate command.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from unittest.mock import MagicMock
@@ -219,6 +220,16 @@ CASES = [
 ]
 
 
+# Cases older gettext accepts but 1.0 rejects; the validator follows 1.0
+GETTEXT_1_0_RULES = {"brace auto dropped"}
+
+
+def _msgfmt_version():
+    result = subprocess.run(["msgfmt", "--version"], capture_output=True, text=True)
+    match = re.search(r"(\d+)\.(\d+)", result.stdout)
+    return (int(match.group(1)), int(match.group(2))) if match else (0, 0)
+
+
 def _validator_accepts(lang, formats, msgid, msgid_plural, msgstr):
     if msgid_plural is None:
         return translation_problem(msgid, msgstr, formats) is None
@@ -262,14 +273,16 @@ def test_translation_problem(lang, formats, msgid, msgid_plural, msgstr, valid):
 
 @pytest.mark.skipif(shutil.which("msgfmt") is None, reason="gettext not installed")
 @pytest.mark.parametrize(
-    ("lang", "formats", "msgid", "msgid_plural", "msgstr", "valid"),
-    [case[1:] for case in CASES],
+    ("name", "lang", "formats", "msgid", "msgid_plural", "msgstr", "valid"),
+    CASES,
     ids=[case[0] for case in CASES],
 )
 def test_cases_match_msgfmt(
-    tmp_path, lang, formats, msgid, msgid_plural, msgstr, valid
+    tmp_path, name, lang, formats, msgid, msgid_plural, msgstr, valid
 ):
     """Every case above is what msgfmt --check-format itself decides."""
+    if name in GETTEXT_1_0_RULES and _msgfmt_version() < (1, 0):
+        pytest.skip("older msgfmt is more lenient here; the validator follows 1.0")
     assert _msgfmt_accepts(tmp_path, lang, formats, msgid, msgid_plural, msgstr) == (
         valid
     )
