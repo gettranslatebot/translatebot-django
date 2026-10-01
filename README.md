@@ -25,7 +25,8 @@ TranslateBot is a dedicated tool that sits between "do it by hand" and "pay for 
 - **Cost-efficient.** Batches strings into optimized API requests. A typical app costs under $0.01 per language with GPT-4o-mini.
 - **Scales to many languages.** One command translates all your configured languages. Adding a new locale is a one-liner.
 - **Automatable.** A CLI command you can script or hook into your workflow. No browser, no portal.
-- **Placeholder-safe.** Preserves `%(name)s`, `{0}`, `%s`, and HTML tags with 100% test coverage on format string handling.
+- **Placeholder-safe.** Keeps `%(name)s`, `{0}`, `%s`, and HTML tags intact: the model is instructed to preserve them, and with DeepL placeholders are swapped for protected tokens and HTML goes through DeepL's tag handling. `compilemessages` catches a placeholder mismatch in `python-format` strings.
+- **Grammar-aware.** With LLM providers, every plural form of the target language gets its own translation (Polish, Russian, Arabic, …), and `pgettext` contexts keep "May" the month apart from "May" the verb.
 
 ## Installation
 
@@ -40,6 +41,8 @@ For model translation at runtime, install it as a regular dependency instead (se
 ```bash
 uv add translatebot-django
 ```
+
+Optional extras: `translatebot-django[deepl]` for the [DeepL](https://translatebot.dev/docs/integrations/deepl/) provider, and `translatebot-django[modeltranslation]` for [model field translation](https://translatebot.dev/docs/usage/model-translation/).
 
 ### Supported versions
 
@@ -58,20 +61,34 @@ Each Django series is tested against the Python versions Django itself supports:
 
 ```python
 # settings.py
+import os
+
 INSTALLED_APPS = [
     # ...
     "translatebot_django",
 ]
 
-TRANSLATEBOT_API_KEY = "your-api-key-here"
+LANGUAGES = [("en", "English"), ("nl", "Dutch"), ("de", "German")]
+
+TRANSLATEBOT_API_KEY = os.getenv("TRANSLATEBOT_API_KEY")
+# The default; any LiteLLM model works, e.g. "claude-sonnet-5"
+TRANSLATEBOT_MODEL = "gpt-4o-mini"
 ```
 
-```bash
-# Translate to Dutch
-python manage.py translate --target-lang nl
+The API key must belong to the provider of `TRANSLATEBOT_MODEL`. To use DeepL instead, set `TRANSLATEBOT_PROVIDER = "deepl"`, put your DeepL key in `TRANSLATEBOT_API_KEY`, and leave out `TRANSLATEBOT_MODEL`.
 
-# Preview without saving
-python manage.py translate --target-lang nl --dry-run
+```bash
+# Extract strings into .po files
+python manage.py makemessages -l nl -l de
+
+# Preview what would be translated (no API calls, but the key must be set)
+python manage.py translate --dry-run
+
+# Translate to all configured languages
+python manage.py translate
+
+# Compile for use
+python manage.py compilemessages
 ```
 
 ## Features
@@ -79,6 +96,8 @@ python manage.py translate --target-lang nl --dry-run
 - **Multiple AI Providers**: OpenAI, Anthropic, Google Gemini, Azure, [many more](https://docs.litellm.ai/docs/providers), and [DeepL](https://www.deepl.com/)
 - **Smart Translation**: Preserves placeholders (`%(name)s`, `{0}`, `%s`) and HTML tags
 - **Model Field Translation**: Supports [django-modeltranslation](https://github.com/deschler/django-modeltranslation)
+- **CI Check**: `python manage.py check_translations` fails the build when strings are untranslated or fuzzy ([CI docs](https://translatebot.dev/docs/usage/ci/))
+- **Python API**: `from translatebot_django import translate` for Celery tasks and scripts ([Python API docs](https://translatebot.dev/docs/usage/python-api/))
 - **Flexible Configuration**: Django settings, environment variables, or CLI arguments
 - **Well Tested**: 100% code coverage
 
@@ -97,12 +116,17 @@ Use TranslateBot when:
 
 For full documentation, visit **[translatebot.dev/docs/](https://translatebot.dev/docs/)**
 
-- [Installation](https://translatebot.dev/docs/getting-started/installation)
-- [Configuration](https://translatebot.dev/docs/getting-started/configuration)
-- [Command Reference](https://translatebot.dev/docs/usage/command-reference)
-- [Model Translation](https://translatebot.dev/docs/usage/model-translation)
-- [Supported AI Models](https://translatebot.dev/docs/integrations/ai-models)
-- [FAQ](https://translatebot.dev/docs/faq)
+- [Installation](https://translatebot.dev/docs/getting-started/installation/)
+- [Configuration](https://translatebot.dev/docs/getting-started/configuration/)
+- [PO File Translation](https://translatebot.dev/docs/usage/po-files/)
+- [Translation Context (`TRANSLATING.md`)](https://translatebot.dev/docs/usage/translation-context/)
+- [Model Translation](https://translatebot.dev/docs/usage/model-translation/)
+- [Command Reference](https://translatebot.dev/docs/usage/command-reference/)
+- [Python API](https://translatebot.dev/docs/usage/python-api/)
+- [CI Integration](https://translatebot.dev/docs/usage/ci/)
+- [Supported AI Models](https://translatebot.dev/docs/integrations/ai-models/)
+- [DeepL](https://translatebot.dev/docs/integrations/deepl/)
+- [FAQ](https://translatebot.dev/docs/faq/)
 
 ## Contributing
 
