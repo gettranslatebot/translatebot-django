@@ -256,8 +256,15 @@ CASES = [
 ]
 
 
-# Cases older gettext accepts but 1.0 rejects; the validator follows 1.0
-GETTEXT_1_0_RULES = {"brace auto dropped"}
+# Brace-format cases where older gettext (e.g. Ubuntu's 0.21) decides
+# differently from 1.0; the validator follows 1.0
+GETTEXT_1_0_RULES = {
+    "brace auto dropped",
+    "brace auto dropped (2 -> 1)",
+    "brace format spec",
+    "brace nested spec dropped",
+    "brace numbered -> auto",
+}
 
 
 def _msgfmt_version():
@@ -318,7 +325,7 @@ def test_cases_match_msgfmt(
 ):
     """Every case above is what msgfmt --check-format itself decides."""
     if name in GETTEXT_1_0_RULES and _msgfmt_version() < (1, 0):
-        pytest.skip("older msgfmt is more lenient here; the validator follows 1.0")
+        pytest.skip("older msgfmt decides differently here; the validator follows 1.0")
     assert _msgfmt_accepts(tmp_path, lang, formats, msgid, msgid_plural, msgstr) == (
         valid
     )
