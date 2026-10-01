@@ -19,9 +19,14 @@ _TYPE_CLASSES = {
     **dict.fromkeys("diouxX", "integer"),
     **dict.fromkeys("eEfgG", "float"),
     **dict.fromkeys("sr", "string"),
-    "a": "ascii",
     "c": "character",
 }
+
+# A python-brace-format spec as gettext accepts it: [[fill]align][sign][#][0]
+# [width][.precision][type]. Note: no "," / "_" grouping and no "s" type.
+_BRACE_SPEC_RE = re.compile(
+    r"(?:.?[<>=^])?[-+ ]?#?0?[0-9]*(?:\.[0-9]+)?[bcdeEfFgGnoxX%]?"
+)
 
 # What a model sometimes returns instead of a translation: "#1", "#2", ...
 _INDEX_MARKER_RE = re.compile(r"^\s*#\d+\s*$")
@@ -34,10 +39,10 @@ class _Invalid(Exception):
 
 
 def _skip_width(text, i, stars):
-    """Skip a width or precision (``*`` or digits) at *i*; count ``*``."""
+    """Skip a width or precision (``*`` or ASCII digits) at *i*; count ``*``."""
     if text.startswith("*", i):
         return i + 1, stars + 1
-    while i < len(text) and text[i].isdigit():
+    while i < len(text) and "0" <= text[i] <= "9":
         i += 1
     return i, stars
 
@@ -81,9 +86,16 @@ def _percent_specs(text):
         if i < len(text) and text[i] in "hlL":
             i += 1
         conv = text[i] if i < len(text) else ""
+        i += 1
+        if conv == "%":
+            # "%5%" or "% %" is a literal percent sign too, but a "*" in it
+            # still takes an argument; "%(x)%" is invalid
+            if name is not None:
+                raise _Invalid(f"an invalid placeholder %({name})%")
+            unnamed.extend(["integer"] * stars)
+            continue
         if conv not in _TYPE_CLASSES:
             raise _Invalid(_LONE_PERCENT)
-        i += 1
         type_class = _TYPE_CLASSES[conv]
         if name is None:
             unnamed.extend(["integer"] * stars + [type_class])
@@ -132,7 +144,13 @@ def _brace_fields(text):
             end += 1
         else:
             raise _Invalid("an unterminated {field}")
-        field = re.split(r"[:]", text[i + 1 : end], maxsplit=1)[0]
+        field, _, spec = text[i + 1 : end].partition(":")
+        if "{" in spec:
+            # One nested field as the whole spec ("{a:{w}}") is allowed
+            if not re.fullmatch(r"\{[^{}:!]*\}", spec) and "{{" not in spec:
+                raise _Invalid(f"a nested {{{field}:{spec}}} gettext doesn't support")
+        elif not _BRACE_SPEC_RE.fullmatch(spec):
+            raise _Invalid(f"an invalid format spec in {{{field}:{spec}}}")
         if "!" in field:
             raise _Invalid(f"a {{{field}}} conversion, which gettext doesn't support")
         if re.match(r"[^.\[]*", field).group() == "":

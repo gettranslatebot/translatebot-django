@@ -253,6 +253,34 @@ CASES = [
     ("brace numbered -> auto", "en", BRACE, "{0} {1}", None, "{} {}", True),
     ("brace auto -> numbered", "en", BRACE, "{} {}", None, "{1} {0}", True),
     ("brace field repeated", "en", BRACE, "{a.b}", None, "{a.b} {a.b}", True),
+    # Third review round
+    ("%a is invalid in source", "en", PY, "%a", None, "%s", True),
+    ("%a is invalid in translation", "en", PY, "%s", None, "%a", False),
+    ("literal %5%", "en", PY, "%s", None, "%s %5%", True),
+    ("literal % %", "en", PY, "%s", None, "%s % %", True),
+    ("literal %.%", "en", PY, "%s", None, "%s %.%", True),
+    ("literal %5% first", "en", PY, "%d", None, "%5% %d", True),
+    ("%*% takes an argument (dropped)", "en", PY, "%s %*%", None, "%s", False),
+    ("%*% takes an argument (added)", "en", PY, "%s", None, "%s %*%", False),
+    ("arabic-indic digit width", "en", PY, "%s", None, "%٣s", False),
+    ("brace spec precision changed", "en", BRACE, "{a:.2f}", None, "{a:.3f}", True),
+    ("brace spec dropped", "en", BRACE, "{a:.2f}", None, "{a}", True),
+    ("brace spec added", "en", BRACE, "{a}", None, "{a:>5}", True),
+    ("brace spec grouping ,", "en", BRACE, "{a:.2f}", None, "{a:,.2f}", False),
+    ("brace spec grouping _", "en", BRACE, "{a}", None, "{a:_}", False),
+    ("brace spec z", "en", BRACE, "{a}", None, "{a:z}", False),
+    ("brace spec s type", "en", BRACE, "{a}", None, "{a:s}", False),
+    ("brace spec %s", "en", BRACE, "{a}", None, "{a:%s}", False),
+    ("brace spec x!r", "en", BRACE, "{a}", None, "{a:x!r}", False),
+    ("brace spec full", "en", BRACE, "{a}", None, "{a:=+08.2f}", True),
+    ("brace spec fill", "en", BRACE, "{a}", None, "{a:*^5}", True),
+    ("brace spec F", "en", BRACE, "{a}", None, "{a:F}", True),
+    ("brace spec double dot", "en", BRACE, "{a}", None, "{a:..2}", False),
+    ("brace spec dot without digits", "en", BRACE, "{a}", None, "{a:5.f}", False),
+    ("brace nested field with extra", "en", BRACE, "{a}", None, "{a:{w}x}", False),
+    ("brace doubly nested", "en", BRACE, "{a}", None, "{a:{b:c}}", False),
+    ("brace nested whole spec", "en", BRACE, "{a}", None, "{a:{w}}", True),
+    ("brace nested in source", "en", BRACE, "{a:>{w}}", None, "{a}", True),
 ]
 
 
@@ -360,6 +388,11 @@ def test_problem_descriptions():
     assert "two different types" in translation_problem("%(n)d", "%(n)s %(n)d", PY)
     assert "mixed" in translation_problem("%(n)d", "%(n)d %s", PY)
     assert "lone" in translation_problem("%(n)d", "%(n", PY)
+    assert "invalid placeholder %(x)%" in translation_problem("%s", "%s %(x)%", PY)
+    assert "invalid format spec in {a:,.2f}" in translation_problem(
+        "{a:.2f}", "{a:,.2f}", BRACE
+    )
+    assert "nested {a:{b:c}}" in translation_problem("{a}", "{a:{b:c}}", BRACE)
 
 
 def test_invalid_source_is_not_compared():
