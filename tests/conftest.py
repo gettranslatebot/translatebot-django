@@ -81,15 +81,27 @@ def mock_completion(mocker):
         def side_effect(**kwargs):
             user_content = kwargs["messages"][1]["content"]
             raw = json.loads(user_content[user_content.find("[") :])
-            # Handle both plain strings and objects with 'text' key
-            if raw and isinstance(raw[0], dict):
-                input_strings = [item["text"] for item in raw]
-            else:
-                input_strings = raw
-            if callable(translation_text):
-                translations = [translation_text(s) for s in input_strings]
-            else:
-                translations = [translation_text] * len(input_strings)
+
+            def translate_one(s):
+                if callable(translation_text):
+                    return translation_text(s)
+                return translation_text
+
+            # Handle plain strings, objects with a 'text' key, and plural
+            # objects (which need one translation per plural form: the
+            # singular's, then the plural's for every other form)
+            translations = []
+            for item in raw:
+                if isinstance(item, str):
+                    translations.append(translate_one(item))
+                elif "plural_forms" in item:
+                    count = len(item["plural_forms"])
+                    translations.append(
+                        [translate_one(item["text"])]
+                        + [translate_one(item["plural"])] * (count - 1)
+                    )
+                else:
+                    translations.append(translate_one(item["text"]))
             mock_resp = mocker.MagicMock()
             mock_resp.choices[0].message.content = json.dumps(translations)
             return mock_resp

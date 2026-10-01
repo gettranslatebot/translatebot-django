@@ -16,14 +16,19 @@ class TranslationProvider(ABC):
             texts: List of strings to translate.
             target_lang: Target language code (e.g., 'nl', 'de').
             context: Optional translation context from TRANSLATING.md.
-            comments: Optional dict mapping source strings to developer
-                      comments extracted from PO files (#. lines).
+            comments: Optional developer comments extracted from PO files
+                      (#. lines, plus the msgctxt): a list aligned with
+                      *texts* (None where a text has none), or a dict
+                      mapping source strings to comments.
             source_lang: Optional language code the texts are written in,
                          when known for certain (e.g. a modeltranslation
                          language column). Providers may ignore it.
 
         Returns:
-            List of translated strings, same length as texts.
+            List of translations, same length as texts: a string per plain
+            text, and a list with one string per plural form for each
+            :class:`~translatebot_django.management.commands.translate.PluralText`
+            (only sent when :attr:`supports_plural_forms` is true).
         """
 
     @abstractmethod
@@ -33,10 +38,12 @@ class TranslationProvider(ABC):
         Args:
             texts: List of strings to split into batches.
             target_lang: Target language code.
-            comments: Optional dict mapping source strings to developer comments.
+            comments: Optional developer comments, aligned with *texts* or
+                      keyed by source string.
 
         Returns:
-            List of lists of strings.
+            List of lists of texts: contiguous, order-preserving slices of
+            *texts*.
         """
 
     @property
@@ -48,6 +55,17 @@ class TranslationProvider(ABC):
     @abstractmethod
     def supports_context(self):
         """Whether this provider can use TRANSLATING.md context."""
+
+    @property
+    def supports_plural_forms(self):
+        """Whether this provider can translate every plural form of a message.
+
+        When true, pluralized PO messages are sent as ``PluralText`` objects
+        describing the target language's plural forms. Otherwise their
+        singular and plural are sent as two strings, and the plural
+        translation is reused for every form past the first.
+        """
+        return False
 
 
 def get_provider(api_key, model=None):

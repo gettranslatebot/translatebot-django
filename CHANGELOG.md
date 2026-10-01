@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- PO files: messages that share a msgid but differ in `msgctxt` (`pgettext("month", "May")` vs `pgettext("permission", "May")`) are translated separately. They used to receive one shared translation, and the msgctxt is now sent to the LLM as a disambiguation hint.
+- PO files: languages with more than two plural forms (Polish, Russian, Czech, Arabic, …) get a correct translation for every form. LLM providers are given the target's plural forms from the `Plural-Forms` header, with example counts per form; previously the English plural was reused for every form past the first (`5 pliki` instead of `5 plików`). DeepL keeps the previous behaviour.
+- Failed LLM requests (connection errors, timeouts, 5xx responses, unknown models), unparseable responses and exhausted rate-limit retries now stop with a clear error instead of a traceback.
+
+### Changed
+
+- PO files: a message shared by several files (e.g. `django.po` and `djangojs.po`, or several apps) is sent for translation once. `strings_found` / "Found N untranslated entries" now counts distinct messages; a plural message counts once.
+
 ## [1.3.4] - 2026-09-21
 
 ### Fixed

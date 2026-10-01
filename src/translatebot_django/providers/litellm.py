@@ -34,3 +34,7 @@ class LiteLLMProvider(TranslationProvider):
     @property
     def supports_context(self):
         return True
+
+    @property
+    def supports_plural_forms(self):
+        return True

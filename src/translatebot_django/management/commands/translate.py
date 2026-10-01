@@ -1,5 +1,8 @@
+import dataclasses
+import gettext
 import json
 import logging
+import re
 import time
 import warnings
 from collections import defaultdict
@@ -12,13 +15,16 @@ from django.core.management.base import BaseCommand, CommandError
 
 try:
     import tiktoken
-    from litellm import completion, get_model_info
+    from litellm import LITELLM_EXCEPTION_TYPES, completion, get_model_info
     from litellm.exceptions import (
         AuthenticationError,
         BadRequestError,
         RateLimitError,
     )
 
+    # Every error litellm raises; their only common base is openai's
+    # APIError, which litellm doesn't re-export.
+    _LITELLM_ERRORS = tuple(LITELLM_EXCEPTION_TYPES)
     _has_litellm = True
 except ImportError:
     _has_litellm = False
@@ -35,6 +41,8 @@ except ImportError:
 
     class RateLimitError(Exception):  # type: ignore[no-redef]
         pass
+
+    _LITELLM_ERRORS = ()
 
 
 from translatebot_django.providers import get_provider
@@ -70,6 +78,9 @@ def _require_litellm():
         raise CommandError(_LITELLM_MISSING_MSG)
 
 
+_PARTIAL_SAVE_NOTE = "Any translations completed before this error have been saved."
+
+
 @contextmanager
 def handle_api_errors():
     """Convert API and response-validation exceptions into CommandErrors."""
@@ -91,10 +102,20 @@ def handle_api_errors():
                 "Please visit your API provider's billing page to add credits."
             ) from e
         raise CommandError(f"API request failed: {str(e)}") from e
+    except RateLimitError as e:
+        raise CommandError(
+            f"Rate limit still exceeded after {MAX_RETRIES} attempts: {e}\n"
+            f"{_PARTIAL_SAVE_NOTE}"
+        ) from e
     except TranslationValidationError as e:
         raise CommandError(
-            f"Translation response validation failed: {e}\n"
-            "Any translations completed before this error have been saved."
+            f"Translation response validation failed: {e}\n{_PARTIAL_SAVE_NOTE}"
+        ) from e
+    except _LITELLM_ERRORS as e:
+        # Every remaining litellm error: connection failures, timeouts,
+        # 5xx responses, unknown models (404), ...
+        raise CommandError(
+            f"API request failed: {type(e).__name__}: {e}\n{_PARTIAL_SAVE_NOTE}"
         ) from e
 
 
@@ -115,6 +136,12 @@ BASE_SYSTEM_PROMPT = (
     "at index N in the output. Never skip, merge, or omit any strings.\n"
     "- When an input element has a 'comment' field, use it as context to "
     "disambiguate the meaning, but do NOT include the comment in the output.\n"
+    "- When an input element has a 'plural' field, it is a pluralized message: "
+    "'text' is the singular source and 'plural' the plural source. Its output "
+    "element MUST be a JSON array with exactly one translated string per entry "
+    "in its 'plural_forms' field, in the same order. Each 'plural_forms' entry "
+    "lists example counts that use that grammatical form in the target "
+    "language.\n"
     "- Preserve all placeholders like %(name)s, {name}, {0}, %s exactly as-is.\n"
     "- Preserve HTML tags exactly as they are.\n"
     "- Preserve line breaks (\\n) in the text.\n"
@@ -158,36 +185,133 @@ def create_preamble(target_lang, count):
     )
 
 
+@dataclasses.dataclass(frozen=True)
+class PluralText:
+    """A pluralized message, translated into all of the target's plural forms.
+
+    Only sent to providers whose ``supports_plural_forms`` is true; their
+    translation for it is a list with one string per entry in *forms*.
+
+    Attributes:
+        singular: The msgid.
+        plural: The msgid_plural.
+        forms: One description per target plural form, listing example
+            counts that use it (e.g. ``"1"``, ``"2, 3, 4, 22"``).
+    """
+
+    singular: str
+    plural: str
+    forms: tuple[str, ...]
+
+
+# Counts scanned for plural-form examples; Arabic's last form starts at 100.
+_PLURAL_SAMPLE_RANGE = range(0, 1000)
+_PLURAL_SAMPLES_PER_FORM = 5
+
+
+def plural_forms_from_header(header):
+    """Describe each plural form declared by a PO ``Plural-Forms`` header.
+
+    Returns:
+        A tuple with one string per form listing example counts using it,
+        e.g. ``("1", "2, 3, 4, 22, 23", "0, 5, 6, 7, 8")`` for Polish, or
+        None when the header is missing or can't be evaluated.
+    """
+    if not header:
+        return None
+    nplurals_match = re.search(r"nplurals\s*=\s*(\d+)", header)
+    plural_match = re.search(r"plural\s*=\s*([^;]+)", header)
+    if not nplurals_match or not plural_match:
+        return None
+    nplurals = int(nplurals_match.group(1))
+    if nplurals < 1:
+        return None
+    try:
+        # gettext.c2py safely compiles the C plural expression used in PO
+        # headers (it rejects anything but arithmetic on n).
+        plural = gettext.c2py(plural_match.group(1).strip())
+        samples = [[] for _ in range(nplurals)]
+        for n in _PLURAL_SAMPLE_RANGE:
+            form = plural(n)
+            if 0 <= form < nplurals and len(samples[form]) < _PLURAL_SAMPLES_PER_FORM:
+                samples[form].append(str(n))
+    except (ValueError, SyntaxError, RecursionError, TypeError, ZeroDivisionError):
+        return None
+    return tuple(", ".join(s) if s else "(unused)" for s in samples)
+
+
+def _align_comments(texts, comments):
+    """Return comments as a list aligned with *texts*, or None if there are none.
+
+    *comments* may be a dict mapping source strings to comments, or a
+    sequence with one comment (or None) per text.
+    """
+    if not comments:
+        return None
+    if isinstance(comments, dict):
+        aligned = [
+            comments.get(t) if isinstance(t, str) else comments.get(t.singular)
+            for t in texts
+        ]
+    else:
+        aligned = list(comments)
+    return aligned if any(aligned) else None
+
+
 def _build_input_payload(texts, comments=None):
     """Build the JSON-serialisable input payload for the LLM.
 
-    When *comments* contains entries for any of the *texts*, the payload uses
+    When any text has a comment or is a :class:`PluralText`, the payload uses
     an object format (``{"text": …, "comment": …}``).  Otherwise a plain
     list of strings is returned for backward-compatibility and token
     efficiency.
+
+    Args:
+        texts: List of strings and/or :class:`PluralText` objects.
+        comments: Dict mapping source strings to comments, or a list of
+            comments aligned with *texts*.
     """
-    if comments:
-        payload = []
-        for s in texts:
-            if s in comments:
-                payload.append({"text": s, "comment": comments[s]})
-            else:
-                payload.append({"text": s})
-        return payload
-    return texts
+    aligned = _align_comments(texts, comments)
+    if aligned is None and all(isinstance(t, str) for t in texts):
+        return texts
+
+    payload = []
+    for i, t in enumerate(texts):
+        if isinstance(t, PluralText):
+            item = {"text": t.singular, "plural": t.plural}
+        else:
+            item = {"text": t}
+        if aligned and aligned[i]:
+            item["comment"] = aligned[i]
+        if isinstance(t, PluralText):
+            item["plural_forms"] = list(t.forms)
+        payload.append(item)
+    return payload
+
+
+def _output_shape(texts):
+    """Approximate the translated output, for estimating output tokens."""
+    return [
+        [t.plural] * len(t.forms) if isinstance(t, PluralText) else t for t in texts
+    ]
 
 
 def translate_text(text, target_lang, model, api_key, context=None, comments=None):
     """Translate text by calling LiteLLM with retry logic for rate limits.
 
     Args:
-        text: List of strings to translate
+        text: List of strings and/or :class:`PluralText` objects to translate
         target_lang: Target language code (e.g., 'nl', 'de')
         model: LLM model to use
         api_key: API key for the LLM provider
         context: Optional translation context from TRANSLATING.md
-        comments: Optional dict mapping source strings to developer comments
-                  extracted from PO files (#. lines).
+        comments: Optional developer comments extracted from PO files (#.
+                  lines): a dict mapping source strings to comments, or a
+                  list aligned with *text*.
+
+    Returns:
+        A list aligned with *text*: a string per plain text, and a list of
+        strings (one per plural form) per :class:`PluralText`.
     """
     _require_litellm()
     preamble = create_preamble(target_lang, len(text))
@@ -244,13 +368,15 @@ def translate_text(text, target_lang, model, api_key, context=None, comments=Non
 
     content = response.choices[0].message.content
     if content is None:
-        raise ValueError(
+        raise TranslationValidationError(
             f"API returned empty response. Model: {model}, Response: {response}"
         )
 
     content = content.strip()
     if not content:
-        raise ValueError(f"API returned empty content after stripping. Model: {model}")
+        raise TranslationValidationError(
+            f"API returned empty content after stripping. Model: {model}"
+        )
 
     # Extract JSON array if LLM added preamble text or wrapped in code blocks
     start = content.find("[")
@@ -264,7 +390,7 @@ def translate_text(text, target_lang, model, api_key, context=None, comments=Non
     try:
         translated = json.loads(content)
     except json.JSONDecodeError as e:
-        raise ValueError(
+        raise TranslationValidationError(
             f"Failed to parse JSON response from API.\n{context_suffix}\nError: {e}"
         ) from e
 
@@ -280,10 +406,31 @@ def translate_text(text, target_lang, model, api_key, context=None, comments=Non
             f"{context_suffix}"
         )
 
-    non_strings = [i for i, v in enumerate(translated) if not isinstance(v, str)]
+    non_strings = [
+        i
+        for i, (src, v) in enumerate(zip(text, translated, strict=True))
+        if not isinstance(src, PluralText) and not isinstance(v, str)
+    ]
     if non_strings:
         raise TranslationValidationError(
             f"API returned non-string elements at indices {non_strings[:5]}.\n"
+            f"{context_suffix}"
+        )
+
+    bad_plurals = [
+        i
+        for i, (src, v) in enumerate(zip(text, translated, strict=True))
+        if isinstance(src, PluralText)
+        and not (
+            isinstance(v, list)
+            and len(v) == len(src.forms)
+            and all(isinstance(form, str) for form in v)
+        )
+    ]
+    if bad_plurals:
+        raise TranslationValidationError(
+            "API returned malformed plural translations at indices "
+            f"{bad_plurals[:5]} (expected one string per plural form).\n"
             f"{context_suffix}"
         )
 
@@ -357,29 +504,35 @@ def batch_by_tokens(texts, target_lang, model, comments=None):
     protects quality on models with very large advertised output caps.
 
     Args:
-        texts: List of strings to split into batches.
+        texts: List of strings and/or :class:`PluralText` objects to split
+            into batches.
         target_lang: Target language code.
         model: LLM model name (used for token limit lookup).
-        comments: Optional dict mapping source strings to developer comments.
+        comments: Optional developer comments: a dict mapping source strings
+            to comments, or a list aligned with *texts*.
 
     Returns:
-        List of lists of strings.
+        List of lists of texts: contiguous, order-preserving slices of
+        *texts*.
     """
     _require_litellm()
     max_input, max_output = _get_model_limits(model)
+    aligned = _align_comments(texts, comments)
 
     groups = []
     group_candidate = []
-    for item in texts:
+    group_start = 0
+    for index, item in enumerate(texts):
         group_candidate += [item]
+        group_comments = aligned[group_start : index + 1] if aligned else None
 
-        input_payload = _build_input_payload(group_candidate, comments)
+        input_payload = _build_input_payload(group_candidate, group_comments)
         input_tokens = get_token_count(json.dumps(input_payload, ensure_ascii=False))
         preamble_tokens = get_token_count(
             create_preamble(target_lang, len(group_candidate))
         )
         text_only_tokens = get_token_count(
-            json.dumps(group_candidate, ensure_ascii=False)
+            json.dumps(_output_shape(group_candidate), ensure_ascii=False)
         )
         output_estimate = text_only_tokens * 1.3
 
@@ -388,51 +541,112 @@ def batch_by_tokens(texts, target_lang, model, comments=None):
             if len(group_candidate) > 1:
                 groups.append(group_candidate[:-1])
             group_candidate = [item]
+            group_start = index
 
     groups.append(group_candidate)
     return groups
 
 
-def gather_strings(po_path, only_empty=True):
-    """Gather translatable strings and developer comments from a PO file.
+@dataclasses.dataclass
+class POUnit:
+    """One PO message to translate, identified by ``(msgctxt, msgid)``.
+
+    Attributes:
+        msgctxt: The message context (``pgettext``), or None.
+        msgid: The source string.
+        msgid_plural: The plural source string, for pluralized messages.
+        comment: Hint for the translator, built from the msgctxt and the
+            extracted developer comments (``#.`` lines), or None.
+        plural_forms: Example counts per target plural form, from the PO
+            file's ``Plural-Forms`` header (see
+            :func:`plural_forms_from_header`), or None if unknown.
+        nplurals: Number of plural forms to write.
+    """
+
+    msgctxt: str | None
+    msgid: str
+    msgid_plural: str | None = None
+    comment: str | None = None
+    plural_forms: tuple[str, ...] | None = None
+    nplurals: int = 2
+
+    @property
+    def key(self):
+        return (self.msgctxt, self.msgid)
+
+    def provider_texts(self, plural_aware):
+        """The texts to send to a provider for this message."""
+        if self.msgid_plural is None:
+            return [self.msgid]
+        if plural_aware and self.plural_forms:
+            return [PluralText(self.msgid, self.msgid_plural, self.plural_forms)]
+        return [self.msgid, self.msgid_plural]
+
+    def translation_from(self, results):
+        """Combine the provider's results for :meth:`provider_texts`.
+
+        Returns a string, or for pluralized messages a list of plural forms.
+        """
+        if self.msgid_plural is None:
+            return results[0]
+        if len(results) == 1:
+            # A PluralText: the provider translated every form itself
+            return results[0]
+        # Singular and plural were translated as two plain strings; reuse
+        # the plural translation for every form past the first.
+        singular, plural = results
+        return [singular] + [plural] * (self.nplurals - 1)
+
+
+def _entry_comment(entry):
+    """Build the translator hint for a PO entry from its msgctxt and comments."""
+    parts = []
+    if entry.msgctxt:
+        parts.append(f"Context: {entry.msgctxt}")
+    if entry.comment and entry.comment.strip():
+        parts.append(entry.comment.strip())
+    return "\n".join(parts) or None
+
+
+def _is_translated(entry):
+    if entry.msgid_plural:
+        return bool(entry.msgstr_plural) and all(entry.msgstr_plural.values())
+    return bool(entry.msgstr)
+
+
+def gather_entries(po_path, include_translated=False):
+    """Gather the messages to translate from a PO file.
+
+    Empty and fuzzy entries are always gathered; translated ones only when
+    *include_translated* is true. Obsolete entries are skipped.
 
     Returns:
-        A tuple of (strings, comments) where *strings* is a list of msgid
-        values to translate and *comments* is a dict mapping msgid strings
-        to their extracted developer comments (the ``#.`` lines in PO files).
+        A list of :class:`POUnit`, one per distinct ``(msgctxt, msgid)``.
     """
     po = polib.pofile(str(po_path), wrapwidth=79)
-    ret = []
-    seen = set()
-    comments = {}
+    plural_forms = plural_forms_from_header(po.metadata.get("Plural-Forms"))
+    units = {}
 
     for entry in po:
         if not entry.msgid or entry.obsolete:
             continue
+        if _is_translated(entry) and not include_translated and not entry.fuzzy:
+            continue
+        key = (entry.msgctxt, entry.msgid)
+        if key in units:
+            continue
+        units[key] = POUnit(
+            msgctxt=entry.msgctxt,
+            msgid=entry.msgid,
+            msgid_plural=entry.msgid_plural or None,
+            comment=_entry_comment(entry),
+            plural_forms=plural_forms,
+            nplurals=(
+                len(plural_forms) if plural_forms else len(entry.msgstr_plural) or 2
+            ),
+        )
 
-        if entry.msgid_plural:
-            # Plural entry: check msgstr_plural values instead of msgstr
-            has_translation = entry.msgstr_plural and all(entry.msgstr_plural.values())
-            if has_translation and not only_empty and not entry.fuzzy:
-                continue
-            for s in (entry.msgid, entry.msgid_plural):
-                if s not in seen:
-                    seen.add(s)
-                    ret.append(s)
-        else:
-            # Skip entries with translations unless they're fuzzy or only_empty is True
-            if entry.msgstr and not only_empty and not entry.fuzzy:
-                continue
-            ret.append(entry.msgid)
-
-        # Capture extracted comment only for entries that will be translated
-        if entry.comment and entry.comment.strip():
-            stripped = entry.comment.strip()
-            comments[entry.msgid] = stripped
-            if entry.msgid_plural:
-                comments[entry.msgid_plural] = stripped
-
-    return ret, comments
+    return list(units.values())
 
 
 class Command(BaseCommand):
@@ -645,34 +859,41 @@ class Command(BaseCommand):
         }
 
     @staticmethod
-    def _save_po_translations(po_paths, msgid_to_translation, overwrite=False):
+    def _save_po_translations(po_paths, translations, overwrite=False):
         """Write current translations to PO files on disk.
 
         Called after each successful batch so that translations are persisted
         incrementally and not lost if a later batch fails.
+
+        Args:
+            po_paths: PO files to update.
+            translations: Dict mapping ``(msgctxt, msgid)`` to a translated
+                string, or for pluralized messages a list of plural forms.
+            overwrite: Also replace existing non-fuzzy translations.
         """
         for po_path in po_paths:
             po = polib.pofile(str(po_path), wrapwidth=79)
             changed = False
 
             for entry in po:
-                if entry.msgid not in msgid_to_translation:
+                key = (entry.msgctxt, entry.msgid)
+                if key not in translations:
                     continue
                 # Never replace existing non-fuzzy translations unless
                 # the user explicitly requested --overwrite.
-                if not overwrite and not entry.fuzzy:
-                    if entry.msgid_plural:
-                        if entry.msgstr_plural and all(entry.msgstr_plural.values()):
-                            continue
-                    elif entry.msgstr:
-                        continue
+                if not overwrite and not entry.fuzzy and _is_translated(entry):
+                    continue
+                value = translations[key]
+                forms = value if isinstance(value, list) else [value]
                 if entry.msgid_plural:
-                    singular = msgid_to_translation[entry.msgid]
-                    plural = msgid_to_translation.get(entry.msgid_plural, singular)
-                    for i in entry.msgstr_plural:
-                        entry.msgstr_plural[i] = singular if i == 0 else plural
+                    count = len(entry.msgstr_plural) or len(forms)
+                    # Repeat the last form if the file declares more plural
+                    # forms than were translated.
+                    entry.msgstr_plural = {
+                        i: forms[min(i, len(forms) - 1)] for i in range(count)
+                    }
                 else:
-                    entry.msgstr = msgid_to_translation[entry.msgid]
+                    entry.msgstr = forms[0]
                 if entry.fuzzy:
                     entry.flags.remove("fuzzy")
                 changed = True
@@ -722,51 +943,79 @@ class Command(BaseCommand):
             context_groups[effective].append(po_path)
 
         # Process each context group
-        msgid_to_translation = {}
+        translations = {}  # (msgctxt, msgid) -> str, or list of plural forms
+        plural_aware = provider.supports_plural_forms
         total_msgids = 0
 
         for effective_context, group_po_paths in context_groups.items():
-            all_msgids = []
-            all_comments = {}
+            # A message shared by several files is translated once
+            units = {}
             for po_path in group_po_paths:
-                strings, comments = gather_strings(po_path, only_empty=overwrite)
-                all_msgids.extend(strings)
-                all_comments.update(comments)
+                for unit in gather_entries(po_path, include_translated=overwrite):
+                    known = units.setdefault(unit.key, unit)
+                    if known is not unit and unit.comment:
+                        known.comment = unit.comment
 
-            total_msgids += len(all_msgids)
+            units = list(units.values())
+            total_msgids += len(units)
 
-            if not all_msgids:
+            if not units:
                 continue
 
-            groups = provider.batch(all_msgids, target_lang, comments=all_comments)
-
             if dry_run:
-                for group in groups:
-                    for msgid in group:
-                        msgid_to_translation[msgid] = ""
-            else:
-                with handle_api_errors():
-                    for batch_num, group in enumerate(groups, 1):
-                        batch_comments = {
-                            t: all_comments[t] for t in group if t in all_comments
-                        } or None
-                        translated = provider.translate(
-                            texts=group,
-                            target_lang=target_lang,
-                            context=effective_context,
-                            comments=batch_comments,
-                        )
-                        for msgid, translation in zip(group, translated, strict=True):
-                            msgid_to_translation[msgid] = translation
+                for unit in units:
+                    translations[unit.key] = ""
+                continue
 
-                        # Save PO files after each batch so translations
-                        # aren't lost if a later batch fails
-                        self._save_po_translations(
-                            group_po_paths,
-                            msgid_to_translation,
-                            overwrite=overwrite,
+            # Flatten to provider texts, remembering which slice of them
+            # belongs to which message (a message may span two texts).
+            texts = []
+            text_comments = []
+            spans = []
+            for unit in units:
+                start = len(texts)
+                for text in unit.provider_texts(plural_aware):
+                    texts.append(text)
+                    text_comments.append(unit.comment)
+                spans.append((start, len(texts)))
+
+            groups = provider.batch(texts, target_lang, comments=text_comments)
+
+            with handle_api_errors():
+                results = []
+                done = 0
+                for batch_num, group in enumerate(groups, 1):
+                    start = len(results)
+                    batch_comments = text_comments[start : start + len(group)]
+                    translated = provider.translate(
+                        texts=group,
+                        target_lang=target_lang,
+                        context=effective_context,
+                        comments=batch_comments if any(batch_comments) else None,
+                    )
+                    if len(translated) != len(group):
+                        raise TranslationValidationError(
+                            f"{provider.name} returned {len(translated)} "
+                            f"translations, expected {len(group)}."
                         )
-                        self.stdout.write(f"  💾 Saved batch {batch_num}/{len(groups)}")
+                    results.extend(translated)
+
+                    # Record every message whose texts are now all translated
+                    while done < len(units) and spans[done][1] <= len(results):
+                        unit_start, unit_end = spans[done]
+                        translations[units[done].key] = units[done].translation_from(
+                            results[unit_start:unit_end]
+                        )
+                        done += 1
+
+                    # Save PO files after each batch so translations
+                    # aren't lost if a later batch fails
+                    self._save_po_translations(
+                        group_po_paths,
+                        translations,
+                        overwrite=overwrite,
+                    )
+                    self.stdout.write(f"  💾 Saved batch {batch_num}/{len(groups)}")
 
         # Early return with minimal output if nothing to translate
         if total_msgids == 0:
@@ -803,7 +1052,7 @@ class Command(BaseCommand):
             changed = 0
 
             for entry in po:
-                if entry.msgid in msgid_to_translation:
+                if (entry.msgctxt, entry.msgid) in translations:
                     if dry_run:
                         self.stdout.write(f"✓ Would translate '{entry.msgid[:50]}'")
                     else:
