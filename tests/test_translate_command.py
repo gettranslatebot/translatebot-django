@@ -67,6 +67,29 @@ def test_get_api_key_without_config(monkeypatch):
         get_api_key()
 
 
+@pytest.mark.parametrize("blank", ["", "   ", "\n"])
+def test_get_api_key_blank_setting_falls_back_to_env(settings, monkeypatch, blank):
+    """A blank setting (e.g. env("...", default="")) counts as unset."""
+    settings.TRANSLATEBOT_API_KEY = blank
+    monkeypatch.setenv("TRANSLATEBOT_API_KEY", "env-api-key")
+    assert get_api_key() == "env-api-key"
+
+
+@pytest.mark.parametrize("blank_env", ["", "  "])
+def test_get_api_key_blank_everywhere_raises(settings, monkeypatch, blank_env):
+    """A blank key is reported as missing, not sent as an empty Bearer token."""
+    settings.TRANSLATEBOT_API_KEY = ""
+    monkeypatch.setenv("TRANSLATEBOT_API_KEY", blank_env)
+    with pytest.raises(CommandError, match="API key not configured"):
+        get_api_key()
+
+
+def test_get_api_key_strips_surrounding_whitespace(settings):
+    """A key read from a file or .env often carries a trailing newline."""
+    settings.TRANSLATEBOT_API_KEY = "  sk-test\n"
+    assert get_api_key() == "sk-test"
+
+
 def test_get_model_from_settings(settings):
     """Test that get_model returns model from Django settings."""
     settings.TRANSLATEBOT_MODEL = "claude-3-sonnet"
