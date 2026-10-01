@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.0] - 2026-10-01
 
 ### Added
 
@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - PO files: a message shared by several files with the same translation context (e.g. `django.po` and `djangojs.po`, or several apps) is sent for translation once, and written to each file that needs it. Counts are still per file.
 - The "Found N untranslated entries" and "Translating with …" lines are printed before translation starts instead of after all batches finished.
+- README: Quick Start covers `LANGUAGES`, `TRANSLATEBOT_MODEL` and DeepL setup; lists the CI check, Python API and install extras.
+- Updated ruff from 0.16.8 to 0.16.9, pytest-mock from 3.15.1 to 3.16.0, and urllib3 from 2.7.0 to 2.8.0
 
 ## [1.3.4] - 2026-09-21
 
@@ -483,6 +485,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[1.4.0]: https://github.com/gettranslatebot/translatebot-django/compare/v1.3.4...v1.4.0
 [1.3.4]: https://github.com/gettranslatebot/translatebot-django/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/gettranslatebot/translatebot-django/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/gettranslatebot/translatebot-django/compare/v1.3.1...v1.3.2
