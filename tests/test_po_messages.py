@@ -522,3 +522,139 @@ def test_command_reports_summary_before_translating(sample_po_file, mock_complet
         < output.index("Saved batch 1/1")
         < output.index("Processing:")
     )
+
+
+# --- Merging the same message across PO files (review findings) ---
+
+
+def test_po_unit_absorb_prefers_plural_and_known_forms():
+    plain = POUnit(None, "Item", comment="first")
+    plural = POUnit(None, "Item", "Items", plural_forms=("1", "2", "5"), nplurals=3)
+    plain.absorb(plural)
+    assert (plain.msgid_plural, plain.plural_forms, plain.nplurals) == (
+        "Items",
+        ("1", "2", "5"),
+        3,
+    )
+    # Comment kept: the absorbed unit has none
+    assert plain.comment == "first"
+
+    unknown = POUnit(None, "Item", "Items")
+    unknown.absorb(plural)
+    assert unknown.plural_forms == ("1", "2", "5")
+
+    # A plain or less-informed duplicate changes nothing
+    plural.absorb(POUnit(None, "Item"))
+    plural.absorb(POUnit(None, "Item", "Items"))
+    assert (plural.plural_forms, plural.nplurals) == (("1", "2", "5"), 3)
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+@pytest.mark.parametrize("plain_first", [True, False])
+def test_command_plural_wins_over_plain_duplicate(
+    tmp_path, settings, mocker, plain_first
+):
+    """gettext("Item") in one app and ngettext("Item", "Items") in another:
+    the plural forms are translated regardless of file order."""
+    plain_dir, plural_dir = tmp_path / "a", tmp_path / "b"
+    if not plain_first:
+        plain_dir, plural_dir = plural_dir, plain_dir
+    plain_po = _write_po(
+        plain_dir / "pl" / "LC_MESSAGES" / "django.po",
+        [polib.POEntry(msgid="Item", msgstr="")],
+    )
+    plural_po = _write_po(
+        plural_dir / "pl" / "LC_MESSAGES" / "django.po",
+        [
+            polib.POEntry(
+                msgid="Item", msgid_plural="Items", msgstr_plural={0: "", 1: "", 2: ""}
+            )
+        ],
+        plural_forms=POLISH_PLURAL_FORMS,
+    )
+    settings.LOCALE_PATHS = [str(tmp_path / "a"), str(tmp_path / "b")]
+    mock = _llm_response(mocker, [["element", "elementy", "elementów"]])
+
+    call_command("translate", target_lang="pl")
+
+    assert _sent_payload(mock)[0]["plural"] == "Items"
+    assert polib.pofile(str(plain_po))[0].msgstr == "element"
+    assert polib.pofile(str(plural_po))[0].msgstr_plural == {
+        0: "element",
+        1: "elementy",
+        2: "elementów",
+    }
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_command_context_groups_keep_their_own_translations(tmp_path, settings, mocker):
+    """An app with its own TRANSLATING.md gets its own translation of a
+    shared msgid, never another group's."""
+    settings.BASE_DIR = tmp_path
+    project_po = _write_po(
+        tmp_path / "locale" / "nl" / "LC_MESSAGES" / "django.po",
+        [polib.POEntry(msgid="Bank", msgstr="")],
+    )
+    app_dir = tmp_path / "shop"
+    app_dir.mkdir()
+    (app_dir / "TRANSLATING.md").write_text("Bank means a river bank.")
+    app_po = _write_po(
+        app_dir / "locale" / "nl" / "LC_MESSAGES" / "django.po",
+        [
+            polib.POEntry(msgid="Water", msgstr=""),
+            polib.POEntry(msgid="Bank", msgstr=""),
+        ],
+    )
+    settings.LOCALE_PATHS = [str(tmp_path / "locale"), str(app_dir / "locale")]
+    # One text per batch: the app's files are saved after "Water", before
+    # its own "Bank" is translated
+    mocker.patch(
+        "translatebot_django.providers.litellm.LiteLLMProvider.batch",
+        side_effect=lambda texts, *_, **__: [[t] for t in texts],
+    )
+
+    def respond(**kwargs):
+        system = kwargs["messages"][0]["content"]
+        source = _sent_payload(MagicMock(call_args=((), kwargs)))[0]
+        if source == "Water":
+            word = "Water"
+        elif "river bank" in system:
+            word = "Oever"
+        else:
+            word = "Bank (financieel)"
+        response = MagicMock()
+        response.choices[0].message.content = json.dumps([word])
+        return response
+
+    mocker.patch(
+        "translatebot_django.management.commands.translate.completion",
+        side_effect=respond,
+    )
+
+    call_command("translate", target_lang="nl")
+
+    assert polib.pofile(str(project_po))[0].msgstr == "Bank (financieel)"
+    assert polib.pofile(str(app_po))[1].msgstr == "Oever"
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_strings_translated_counts_only_written_entries(
+    temp_locale_dir, mock_completion, dry_run
+):
+    """An entry already translated in one file isn't counted (or reported)
+    just because the same msgid was translated for another file."""
+    lc = temp_locale_dir / "nl" / "LC_MESSAGES"
+    _write_po(lc / "django.po", [polib.POEntry(msgid="Save", msgstr="Bewaren")])
+    _write_po(lc / "djangojs.po", [polib.POEntry(msgid="Save", msgstr="")])
+    mock_completion("Opslaan")
+
+    from translatebot_django import translate
+
+    result = translate(target_langs="nl", dry_run=dry_run)
+
+    assert result.strings_found == 1
+    assert result.strings_translated == 1
+    assert polib.pofile(str(lc / "django.po"))[0].msgstr == "Bewaren"
+    if not dry_run:
+        assert polib.pofile(str(lc / "djangojs.po"))[0].msgstr == "Opslaan"

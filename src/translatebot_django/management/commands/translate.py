@@ -574,6 +574,27 @@ class POUnit:
     def key(self):
         return (self.msgctxt, self.msgid)
 
+    def absorb(self, other):
+        """Merge in the same message gathered from another PO file.
+
+        The last non-empty comment wins. A plural version of the message wins
+        over a plain one, so that its plural is translated too, and known
+        plural forms win over unknown ones (or fewer ones).
+        """
+        if other.comment:
+            self.comment = other.comment
+        if other.msgid_plural is None:
+            return
+        if self.msgid_plural is None:
+            self.msgid_plural = other.msgid_plural
+            self.plural_forms = other.plural_forms
+            self.nplurals = other.nplurals
+        elif other.plural_forms and len(other.plural_forms) > len(
+            self.plural_forms or ()
+        ):
+            self.plural_forms = other.plural_forms
+            self.nplurals = other.nplurals
+
     def provider_texts(self, plural_aware):
         """The texts to send to a provider for this message."""
         if self.msgid_plural is None:
@@ -945,13 +966,16 @@ class Command(BaseCommand):
         # Gather the messages of each context group; a message shared by
         # several files is translated once
         work = []  # (effective_context, group_po_paths, units)
+        pending = {}  # po_path -> keys of the entries it needs translated
         for effective_context, group_po_paths in context_groups.items():
             units = {}
             for po_path in group_po_paths:
-                for unit in gather_entries(po_path, include_translated=overwrite):
+                file_units = gather_entries(po_path, include_translated=overwrite)
+                pending[po_path] = {unit.key for unit in file_units}
+                for unit in file_units:
                     known = units.setdefault(unit.key, unit)
-                    if known is not unit and unit.comment:
-                        known.comment = unit.comment
+                    if known is not unit:
+                        known.absorb(unit)
             if units:
                 work.append((effective_context, group_po_paths, list(units.values())))
 
@@ -979,15 +1003,18 @@ class Command(BaseCommand):
 
         self.stdout.write(f"ℹ️  Found {total_msgids} untranslated entries")
 
-        translations = {}  # (msgctxt, msgid) -> str, or list of plural forms
+        # po_path -> keys of the entries translated (or, in a dry run, to be
+        # translated) in that file
+        done = {po_path: set() for po_path in po_paths}
         if dry_run:
             self.stdout.write("🔍 Dry run mode: skipping translation")
-            for _, _, units in work:
-                for unit in units:
-                    translations[unit.key] = ""
+            done.update(pending)
         else:
             self.stdout.write(f"🔄 Translating with {provider.name}...")
             for effective_context, group_po_paths, units in work:
+                # Per group, so one group's translation (made with its own
+                # TRANSLATING.md) is never written into another group's files
+                translations = {}
                 self._translate_po_units(
                     units,
                     group_po_paths,
@@ -997,6 +1024,8 @@ class Command(BaseCommand):
                     context=effective_context,
                     overwrite=overwrite,
                 )
+                for po_path in group_po_paths:
+                    done[po_path] = pending[po_path] & translations.keys()
 
         # Report what was translated and save PO files for dry-run
         total_changed = 0
@@ -1006,7 +1035,7 @@ class Command(BaseCommand):
             changed = 0
 
             for entry in po:
-                if (entry.msgctxt, entry.msgid) in translations:
+                if (entry.msgctxt, entry.msgid) in done[po_path]:
                     if dry_run:
                         self.stdout.write(f"✓ Would translate '{entry.msgid[:50]}'")
                     else:

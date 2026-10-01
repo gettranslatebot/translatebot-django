@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - PO files: messages that share a msgid but differ in `msgctxt` (`pgettext("month", "May")` vs `pgettext("permission", "May")`) are translated separately. They used to receive one shared translation, and the msgctxt is now sent to the LLM as a disambiguation hint.
 - PO files: languages with more than two plural forms (Polish, Russian, Czech, Arabic, …) get a correct translation for every form. LLM providers are given the target's plural forms from the `Plural-Forms` header, with example counts per form; previously the English plural was reused for every form past the first (`5 pliki` instead of `5 plików`). DeepL keeps the previous behaviour.
+- PO files: a translation made with one app's `TRANSLATING.md` could be written into another context group's file when that group saved an earlier batch first, after which the group's own translation was skipped.
+- PO files: `strings_translated` and the "✓ Translated" lines counted entries that were already translated in their own file but shared a msgid with an entry translated elsewhere.
 - Failed LLM requests (connection errors, timeouts, 5xx responses, unknown models), unparseable responses and exhausted rate-limit retries now stop with a clear error instead of a traceback.
 
 ### Changed
