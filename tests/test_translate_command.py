@@ -24,7 +24,7 @@ from translatebot_django.management.commands.translate import (
     _build_input_payload,
     batch_by_tokens,
     build_system_prompt,
-    gather_strings,
+    gather_entries,
     translate_text,
 )
 from translatebot_django.providers import get_provider
@@ -818,20 +818,31 @@ def test_command_translates_plural_entries_nplurals_3(temp_locale_dir, mock_comp
     po.append(plural_entry)
     po.save(str(po_path))
 
-    def translate_fn(s):
-        return {
-            "%(count)d item": "%(count)d element",
-            "%(count)d items": "%(count)d elementów",
-        }[s]
-
-    mock_completion(translate_fn)
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = json.dumps(
+        [["%(count)d element", "%(count)d elementy", "%(count)d elementów"]]
+    )
+    mock = mock_completion()
+    mock.side_effect = None
+    mock.return_value = mock_response
 
     call_command("translate", target_lang="test")
+
+    # The LLM is asked for every plural form, with example counts per form
+    user_content = mock.call_args[1]["messages"][1]["content"]
+    payload = json.loads(user_content[user_content.find("[") :])
+    assert payload == [
+        {
+            "text": "%(count)d item",
+            "plural": "%(count)d items",
+            "plural_forms": ["1", "2, 3, 4, 22, 23", "0, 5, 6, 7, 8"],
+        }
+    ]
 
     po = polib.pofile(str(po_path))
     entry = [e for e in po if e.msgid == "%(count)d item"][0]
     assert entry.msgstr_plural[0] == "%(count)d element"
-    assert entry.msgstr_plural[1] == "%(count)d elementów"
+    assert entry.msgstr_plural[1] == "%(count)d elementy"
     assert entry.msgstr_plural[2] == "%(count)d elementów"
 
 
@@ -2572,6 +2583,10 @@ def test_litellm_import_error_creates_sentinel_classes():
         assert issubclass(mod.AuthenticationError, Exception)
         assert issubclass(mod.BadRequestError, Exception)
         assert issubclass(mod.RateLimitError, Exception)
+        assert mod._LITELLM_ERRORS == ()
+        assert mod._TRANSIENT_ERRORS == ()
+        assert issubclass(mod.Timeout, Exception)
+        assert issubclass(mod.APIError, Exception)
     finally:
         # Restore original module entries and reload to reset state
         for k, v in original_modules.items():
@@ -2582,11 +2597,11 @@ def test_litellm_import_error_creates_sentinel_classes():
         importlib.reload(mod)
 
 
-# --- Test for `seen` deduplication in gather_strings ---
+# --- Tests for gather_entries ---
 
 
-def test_gather_strings_deduplicates_shared_plural_msgids(tmp_path):
-    """Test that gather_strings deduplicates when plural entries share msgid strings."""
+def test_gather_entries_keeps_plural_entries_sharing_strings(tmp_path):
+    """A plural entry's msgid_plural matching another msgid keeps both entries."""
     po_path = tmp_path / "django.po"
     po = polib.POFile()
     po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
@@ -2606,21 +2621,19 @@ def test_gather_strings_deduplicates_shared_plural_msgids(tmp_path):
     po.append(entry2)
     po.save(str(po_path))
 
-    strings, comments = gather_strings(po_path)
-    # "%(count)d items" should appear only once despite being in both entries
-    assert strings == [
-        "%(count)d item",
-        "%(count)d items",
-        "%(count)d more items",
+    units = gather_entries(po_path)
+    assert [(u.msgid, u.msgid_plural) for u in units] == [
+        ("%(count)d item", "%(count)d items"),
+        ("%(count)d items", "%(count)d more items"),
     ]
-    assert comments == {}
+    assert all(u.comment is None for u in units)
 
 
 # --- Tests for PO file extracted comments ---
 
 
-def test_gather_strings_returns_extracted_comments(tmp_path):
-    """Test that gather_strings returns extracted comments from PO entries."""
+def test_gather_entries_returns_extracted_comments(tmp_path):
+    """Test that gather_entries returns extracted comments from PO entries."""
     po_path = tmp_path / "django.po"
     po = polib.POFile()
     po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
@@ -2634,14 +2647,14 @@ def test_gather_strings_returns_extracted_comments(tmp_path):
     po.append(polib.POEntry(msgid="Hello", msgstr=""))
     po.save(str(po_path))
 
-    strings, comments = gather_strings(po_path)
-    assert strings == ["Save", "Hello"]
-    assert comments == {"Save": "Button label for saving the document"}
-    assert "Hello" not in comments
+    units = gather_entries(po_path)
+    assert [u.msgid for u in units] == ["Save", "Hello"]
+    assert units[0].comment == "Button label for saving the document"
+    assert units[1].comment is None
 
 
-def test_gather_strings_plural_entry_comment_applies_to_both_forms(tmp_path):
-    """Test that a plural entry's comment applies to both msgid and msgid_plural."""
+def test_gather_entries_plural_entry_keeps_comment(tmp_path):
+    """Test that a plural entry's comment is kept on its unit."""
     po_path = tmp_path / "django.po"
     po = polib.POFile()
     po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
@@ -2655,14 +2668,15 @@ def test_gather_strings_plural_entry_comment_applies_to_both_forms(tmp_path):
     )
     po.save(str(po_path))
 
-    strings, comments = gather_strings(po_path)
-    assert "%(count)d item" in comments
-    assert "%(count)d items" in comments
-    assert comments["%(count)d item"] == "Shown in shopping cart badge"
-    assert comments["%(count)d items"] == "Shown in shopping cart badge"
+    (unit,) = gather_entries(po_path)
+    assert unit.msgid_plural == "%(count)d items"
+    assert unit.comment == "Shown in shopping cart badge"
+    # Without a Plural-Forms header the forms are unknown
+    assert unit.plural_forms is None
+    assert unit.nplurals == 2
 
 
-def test_gather_strings_ignores_empty_and_whitespace_comments(tmp_path):
+def test_gather_entries_ignores_empty_and_whitespace_comments(tmp_path):
     """Test that entries with empty or whitespace-only comments are excluded."""
     po_path = tmp_path / "django.po"
     po = polib.POFile()
@@ -2671,9 +2685,9 @@ def test_gather_strings_ignores_empty_and_whitespace_comments(tmp_path):
     po.append(polib.POEntry(msgid="World", msgstr="", comment="   "))
     po.save(str(po_path))
 
-    strings, comments = gather_strings(po_path)
-    assert strings == ["Hello", "World"]
-    assert comments == {}
+    units = gather_entries(po_path)
+    assert [u.msgid for u in units] == ["Hello", "World"]
+    assert all(u.comment is None for u in units)
 
 
 def test_build_input_payload_with_comments():
@@ -2752,12 +2766,8 @@ def test_base_system_prompt_mentions_comment_fields():
     assert "disambiguate" in BASE_SYSTEM_PROMPT.lower()
 
 
-def test_gather_strings_skips_comments_for_already_translated_entries(tmp_path):
-    """Test that comments are only collected for entries that will be translated.
-
-    only_empty=False is the non-overwrite mode (the default call path), which
-    skips entries that already have a translation.
-    """
+def test_gather_entries_skips_already_translated_entries(tmp_path):
+    """Translated entries (and their comments) are skipped by default."""
     po_path = tmp_path / "django.po"
     po = polib.POFile()
     po.metadata = {"Content-Type": "text/plain; charset=utf-8"}
@@ -2777,18 +2787,20 @@ def test_gather_strings_skips_comments_for_already_translated_entries(tmp_path):
     )
     po.save(str(po_path))
 
-    strings, comments = gather_strings(po_path, only_empty=False)
-    assert strings == ["Hello"]
-    assert "Save" not in comments
-    assert comments == {"Hello": "Needs translation"}
+    units = gather_entries(po_path)
+    assert [(u.msgid, u.comment) for u in units] == [("Hello", "Needs translation")]
+    assert [u.msgid for u in gather_entries(po_path, include_translated=True)] == [
+        "Save",
+        "Hello",
+    ]
 
 
 @pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
 def test_comment_conflict_across_po_files_last_wins(
     tmp_path, settings, mock_completion
 ):
-    """Test that when the same msgid has different comments in two PO files,
-    the last one processed wins."""
+    """When the same msgid has different comments in two PO files, it is
+    translated once, with the last file's comment."""
     locale1 = tmp_path / "locale1"
     locale2 = tmp_path / "locale2"
 
@@ -2806,17 +2818,18 @@ def test_comment_conflict_across_po_files_last_wins(
     po2.append(polib.POEntry(msgid="Bank", msgstr="", comment="River bank"))
     po2.save(str(locale2 / "nl" / "LC_MESSAGES" / "django.po"))
 
-    # Gather from both files, simulating what _translate_po_files does
-    all_comments = {}
-    for po_path in (
-        locale1 / "nl" / "LC_MESSAGES" / "django.po",
-        locale2 / "nl" / "LC_MESSAGES" / "django.po",
-    ):
-        _, comments = gather_strings(po_path)
-        all_comments.update(comments)
+    settings.LOCALE_PATHS = [str(locale1), str(locale2)]
+    mock = mock_completion("Oever")
 
-    # Last PO file's comment wins
-    assert all_comments["Bank"] == "River bank"
+    call_command("translate", target_lang="nl")
+
+    user_content = mock.call_args[1]["messages"][1]["content"]
+    payload = json.loads(user_content[user_content.find("[") :])
+    # Last PO file's comment wins, and the shared msgid is sent once
+    assert payload == [{"text": "Bank", "comment": "River bank"}]
+    for locale_dir in (locale1, locale2):
+        po = polib.pofile(str(locale_dir / "nl" / "LC_MESSAGES" / "django.po"))
+        assert po[0].msgstr == "Oever"
 
 
 def test_batch_by_tokens_accounts_for_comments(mocker):
@@ -2981,7 +2994,7 @@ def test_save_po_translations_preserves_existing(tmp_path):
     po_dj.save(str(dj_path))
 
     # Simulate the LLM returning "último"
-    msgid_to_translation = {"last": "último"}
+    msgid_to_translation = {(None, "last"): "último"}
 
     Command._save_po_translations([dj_path, js_path], msgid_to_translation)
 
@@ -3006,7 +3019,7 @@ def test_save_po_translations_overwrites_when_requested(tmp_path):
     js_path = lc / "djangojs.po"
     po_js.save(str(js_path))
 
-    msgid_to_translation = {"last": "último"}
+    msgid_to_translation = {(None, "last"): "último"}
 
     Command._save_po_translations([js_path], msgid_to_translation, overwrite=True)
 
@@ -3028,7 +3041,7 @@ def test_save_po_translations_replaces_fuzzy(tmp_path):
     po_path = lc / "django.po"
     po.save(str(po_path))
 
-    Command._save_po_translations([po_path], {"last": "último"})
+    Command._save_po_translations([po_path], {(None, "last"): "último"})
 
     saved = polib.pofile(str(po_path))
     assert saved[0].msgstr == "último"

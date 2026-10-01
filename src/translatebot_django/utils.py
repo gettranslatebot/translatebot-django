@@ -7,11 +7,32 @@ from django.utils.translation import to_locale
 
 PO_FILENAMES = ("django.po", "djangojs.po")
 
+# Seconds to wait for one LLM API request (TRANSLATEBOT_TIMEOUT). Generous
+# enough for a full batch (PRACTICAL_OUTPUT_BUDGET output tokens) at ~27
+# tokens/s, short enough that a stalled provider fails the run instead of
+# hanging it.
+DEFAULT_TIMEOUT_SECONDS = 300
+
 
 def get_model():
     """Get default model from the Django settings or use fallback."""
     model = getattr(settings, "TRANSLATEBOT_MODEL", "gpt-4o-mini")
     return model
+
+
+def get_timeout():
+    """Get the per-request API timeout in seconds from the Django settings."""
+    timeout = getattr(settings, "TRANSLATEBOT_TIMEOUT", DEFAULT_TIMEOUT_SECONDS)
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, int | float)
+        or timeout <= 0
+    ):
+        raise CommandError(
+            f"TRANSLATEBOT_TIMEOUT must be a positive number of seconds, "
+            f"got {timeout!r}."
+        )
+    return timeout
 
 
 def get_api_key():

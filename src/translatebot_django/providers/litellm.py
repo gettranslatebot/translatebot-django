@@ -4,9 +4,12 @@ from translatebot_django.providers import TranslationProvider
 class LiteLLMProvider(TranslationProvider):
     """Translation provider using LiteLLM (OpenAI, Anthropic, etc.)."""
 
-    def __init__(self, model, api_key):
+    def __init__(self, model, api_key, timeout=None):
+        from translatebot_django.utils import DEFAULT_TIMEOUT_SECONDS
+
         self._model = model
         self._api_key = api_key
+        self._timeout = timeout if timeout is not None else DEFAULT_TIMEOUT_SECONDS
 
     def translate(
         self, texts, target_lang, context=None, comments=None, source_lang=None
@@ -20,6 +23,7 @@ class LiteLLMProvider(TranslationProvider):
             api_key=self._api_key,
             context=context,
             comments=comments,
+            timeout=self._timeout,
         )
 
     def batch(self, texts, target_lang, comments=None):
@@ -33,4 +37,8 @@ class LiteLLMProvider(TranslationProvider):
 
     @property
     def supports_context(self):
+        return True
+
+    @property
+    def supports_plural_forms(self):
         return True

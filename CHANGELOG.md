@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `TRANSLATEBOT_TIMEOUT` setting: seconds to wait for each LLM API request (default 300). Previously no timeout was set, so a stalled provider could hang `translate` indefinitely.
+- LLM requests that time out, fail to connect, or get a server error (5xx) are retried twice, after 5 and 15 seconds, with a logged warning. The HTTP client's own silent retries are disabled so the timeout applies as configured; rate-limit retries now honour the provider's `Retry-After` instead of always waiting at least 60 seconds.
+- A warning is logged for PO files with plural entries but no usable `Plural-Forms` header (missing, or makemessages' `nplurals=INTEGER` placeholder); their plural forms can't be translated individually.
+
+### Fixed
+
+- PO files: messages that share a msgid but differ in `msgctxt` (`pgettext("month", "May")` vs `pgettext("permission", "May")`) are translated separately. They used to receive one shared translation, and the msgctxt is now sent to the LLM as a disambiguation hint.
+- PO files: languages with more than two plural forms (Polish, Russian, Czech, Arabic, …) get a correct translation for every form. LLM providers are given the target's plural forms from the `Plural-Forms` header, with example counts per form; previously the English plural was reused for every form past the first (`5 pliki` instead of `5 plików`). DeepL keeps the previous behaviour.
+- PO files: a translation made with one app's `TRANSLATING.md` could be written into another context group's file when that group saved an earlier batch first, after which the group's own translation was skipped.
+- PO files: `strings_translated` and the "✓ Translated" lines counted entries that were already translated in their own file but shared a msgid with an entry translated elsewhere.
+- Failed LLM requests (connection errors, timeouts, 5xx responses, unknown models), unparseable responses and exhausted rate-limit retries now stop with a clear error instead of a traceback.
+
+### Changed
+
+- PO files: a message shared by several files with the same translation context (e.g. `django.po` and `djangojs.po`, or several apps) is sent for translation once, and written to each file that needs it. Counts are still per file.
+- The "Found N untranslated entries" and "Translating with …" lines are printed before translation starts instead of after all batches finished.
+
 ## [1.3.4] - 2026-09-21
 
 ### Fixed
