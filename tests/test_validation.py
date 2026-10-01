@@ -217,6 +217,42 @@ CASES = [
         True,
     ),
     ("brace ja omits", "ja", BRACE, "{n} file", "{n} files", ["ファイル"], False),
+    # Second review round: cases the first parser got wrong
+    ("brace attr dropped", "en", BRACE, "{a.b} {c}", None, "{a} {c}", False),
+    ("brace attr added", "en", BRACE, "{a} {c}", None, "{a.b} {c}", False),
+    ("brace index changed", "en", BRACE, "{a[0]} {c}", None, "{a[1]} {c}", False),
+    ("brace attr changed", "en", BRACE, "{a.b} {c}", None, "{a.c} {c}", False),
+    ("brace attr kept", "en", BRACE, "{a.b} {c[0]}", None, "{c[0]} {a.b}", True),
+    ("brace !r in translation", "en", BRACE, "{a}", None, "{a!r}", False),
+    ("brace !r in source", "en", BRACE, "{a!r} {b}", None, "{a!r}", True),
+    ("brace lone }", "en", BRACE, "{a}", None, "{a} }", True),
+    ("brace format spec", "en", BRACE, "{a:>10}", None, "{a:<5}", True),
+    ("star width added", "en", PY, "%d x", None, "%*d y", False),
+    ("star width counts as argument", "en", PY, "%d %d x", None, "%*d y", True),
+    ("star width in named", "en", PY, "%(n)d x", None, "%(n)*d y", False),
+    ("repeated name, two types", "en", PY, "%(n)d file", None, "%(n)s %(n)d", False),
+    ("repeated name, same type", "en", PY, "%(n)d file", None, "%(n)d %(n)i", True),
+    ("repeated name in source", "en", PY, "%(n)d %(n)s", None, "%(n)d", True),
+    ("named %% conversion", "en", PY, "%s", None, "%s %(x)%", False),
+    ("%a kept", "en", PY, "%a", None, "%a", True),
+    ("mixed source: named dropped", "en", PY, "%(n)d and %s", None, "%(n)d", True),
+    ("mixed source: unnamed dropped", "en", PY, "%(x)s %s", None, "%(x)s", True),
+    ("mixed translation", "en", PY, "%(n)d", None, "%(n)d %s", False),
+    ("precision star kept", "en", PY, "%.*f x", None, "%.*f y", True),
+    ("precision star dropped", "en", PY, "%.*f x", None, "%f y", False),
+    ("width and precision", "en", PY, "%5.2f x", None, "%-8.3f y", True),
+    ("length modifier", "en", PY, "%ld x", None, "%d y", True),
+    ("unterminated name", "en", PY, "%(n)d", None, "%(n", False),
+    ("brace nested spec", "en", BRACE, "{a:{w}}", None, "{a:{w}}", True),
+    ("brace nested spec dropped", "en", BRACE, "{a:{w}} {b}", None, "{a} {b}", True),
+    ("brace nested unterminated", "en", BRACE, "{a}", None, "{a:{w}", False),
+    ("brace auto with attr", "en", BRACE, "{} {.x}", None, "{.x} {}", True),
+    ("brace auto attr dropped", "en", BRACE, "{} {.x}", None, "{} {}", True),
+    ("brace auto dropped (2 -> 1)", "en", BRACE, "{} {}", None, "{}", False),
+    ("brace numbered attr dropped", "en", BRACE, "{0.x}", None, "{0}", False),
+    ("brace numbered -> auto", "en", BRACE, "{0} {1}", None, "{} {}", True),
+    ("brace auto -> numbered", "en", BRACE, "{} {}", None, "{1} {0}", True),
+    ("brace field repeated", "en", BRACE, "{a.b}", None, "{a.b} {a.b}", True),
 ]
 
 
@@ -309,7 +345,14 @@ def test_problem_descriptions():
     assert "fields not in the source: {x}" in translation_problem(
         "Hi {name}", "Hi {name} {x}", BRACE
     )
-    assert "invalid {field}" in translation_problem("Hi {name}", "Hi {name", BRACE)
+    assert "unterminated {field}" in translation_problem("Hi {name}", "Hi {name", BRACE)
+    assert "conversion, which gettext doesn't support" in translation_problem(
+        "{a}", "{a!r}", BRACE
+    )
+    assert "'*' width" in translation_problem("%(n)d", "%(n)*d", PY)
+    assert "two different types" in translation_problem("%(n)d", "%(n)s %(n)d", PY)
+    assert "mixed" in translation_problem("%(n)d", "%(n)d %s", PY)
+    assert "lone" in translation_problem("%(n)d", "%(n", PY)
 
 
 def test_invalid_source_is_not_compared():

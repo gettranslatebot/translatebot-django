@@ -9,86 +9,151 @@ gettext 1.0; see tests/test_validation.py.
 """
 
 import re
-import string
 
 PYTHON_FORMAT = "python-format"
 PYTHON_BRACE_FORMAT = "python-brace-format"
 FORMAT_FLAGS = frozenset({PYTHON_FORMAT, PYTHON_BRACE_FORMAT})
-
-# A printf-style conversion gettext accepts in python-format strings:
-# %s, %(name)s, %-5.2f, %*d, %%, ... (%F and %a are not among them).
-_PERCENT_SPEC_RE = re.compile(
-    r"%(?:\((?P<name>[^)]*)\))?[#0\- +]*(?:\*|\d+)?(?:\.(?:\*|\d+))?[hlL]?"
-    r"(?P<conv>[diouxXeEfgGcsr%])"
-)
 
 # Conversions msgfmt treats as interchangeable
 _TYPE_CLASSES = {
     **dict.fromkeys("diouxX", "integer"),
     **dict.fromkeys("eEfgG", "float"),
     **dict.fromkeys("sr", "string"),
+    "a": "ascii",
     "c": "character",
 }
 
 # What a model sometimes returns instead of a translation: "#1", "#2", ...
 _INDEX_MARKER_RE = re.compile(r"^\s*#\d+\s*$")
 
+_LONE_PERCENT = "a lone '%' (a literal percent sign must be written as '%%')"
+
+
+class _Invalid(Exception):
+    """The string isn't a valid format string; the message says why."""
+
+
+def _skip_width(text, i, stars):
+    """Skip a width or precision (``*`` or digits) at *i*; count ``*``."""
+    if text.startswith("*", i):
+        return i + 1, stars + 1
+    while i < len(text) and text[i].isdigit():
+        i += 1
+    return i, stars
+
 
 def _percent_specs(text):
-    """Return ``(named, unnamed)`` conversions in *text*, or None if invalid.
+    """Parse *text* as a python-format string, the way msgfmt does.
 
-    *named* maps each name to its type class; *unnamed* lists the type
-    classes in order. A ``%`` that isn't part of a valid conversion (a
-    literal percent sign must be written ``%%``) makes the text invalid.
+    Returns ``(named, unnamed)``: *named* maps each name to its type class,
+    *unnamed* lists the type classes of positional arguments in order
+    (``*`` widths take an integer argument of their own).
+
+    Raises:
+        _Invalid: For a lone ``%``, an unknown conversion, ``*`` in a named
+            conversion, a name used with two types, or named and unnamed
+            conversions mixed.
     """
-    if "%" in _PERCENT_SPEC_RE.sub("", text):
-        return None
     named = {}
     unnamed = []
-    for match in _PERCENT_SPEC_RE.finditer(text):
-        conv = match.group("conv")
-        if conv == "%":
+    i = 0
+    while True:
+        i = text.find("%", i)
+        if i == -1:
+            break
+        i += 1
+        if text.startswith("%", i):
+            i += 1
             continue
+        name = None
+        if text.startswith("(", i):
+            end = text.find(")", i)
+            if end == -1:
+                raise _Invalid(_LONE_PERCENT)
+            name = text[i + 1 : end]
+            i = end + 1
+        while i < len(text) and text[i] in "#0- +":
+            i += 1
+        stars = 0
+        i, stars = _skip_width(text, i, stars)
+        if text.startswith(".", i):
+            i, stars = _skip_width(text, i + 1, stars)
+        if i < len(text) and text[i] in "hlL":
+            i += 1
+        conv = text[i] if i < len(text) else ""
+        if conv not in _TYPE_CLASSES:
+            raise _Invalid(_LONE_PERCENT)
+        i += 1
         type_class = _TYPE_CLASSES[conv]
-        if match.group("name") is not None:
-            named[match.group("name")] = type_class
-        else:
-            unnamed.append(type_class)
+        if name is None:
+            unnamed.extend(["integer"] * stars + [type_class])
+        elif stars:
+            raise _Invalid(f"a '*' width in the named placeholder %({name})")
+        elif named.setdefault(name, type_class) != type_class:
+            raise _Invalid(f"placeholder {name} used with two different types")
+    if named and unnamed:
+        raise _Invalid("named and unnamed placeholders mixed")
     return named, unnamed
 
 
 def _brace_fields(text):
-    """Return the set of field names in *text*, or None if it's invalid.
+    """Parse *text* as a python-brace-format string, the way msgfmt does.
 
-    Auto-numbered ``{}`` fields are numbered by position, as str.format()
-    does, so dropping one of two ``{}`` is noticed.
+    Returns the set of replacement fields, each with its full
+    ``.attribute`` / ``[index]`` chain. Auto-numbered ``{}`` fields are
+    numbered by position, as str.format() does, without their chain: msgfmt
+    is inconsistent about those (it accepts ``{.x}`` -> ``{.y}`` but not
+    ``{}`` -> ``{.x}``), and being lenient there is safer than rejecting a
+    valid translation. A lone ``}`` is literal.
+
+    Raises:
+        _Invalid: For an unterminated field, or a ``!conversion``, which
+            msgfmt doesn't support.
     """
     fields = set()
     position = 0
-    try:
-        for _, field, _, _ in string.Formatter().parse(text):
-            if field is None:
-                continue
-            name = re.split(r"[.\[]", field, maxsplit=1)[0]
-            if name == "":
-                name = str(position)
-                position += 1
-            fields.add(name)
-    except ValueError:
-        return None
+    i = 0
+    while True:
+        i = text.find("{", i)
+        if i == -1:
+            break
+        if text.startswith("{", i + 1):
+            i += 2
+            continue
+        depth = 0
+        end = i + 1
+        while end < len(text):
+            if text[end] == "{":
+                depth += 1
+            elif text[end] == "}":
+                if depth == 0:
+                    break
+                depth -= 1
+            end += 1
+        else:
+            raise _Invalid("an unterminated {field}")
+        field = re.split(r"[:]", text[i + 1 : end], maxsplit=1)[0]
+        if "!" in field:
+            raise _Invalid(f"a {{{field}}} conversion, which gettext doesn't support")
+        if re.match(r"[^.\[]*", field).group() == "":
+            field = str(position)
+            position += 1
+        fields.add(field)
+        i = end + 1
     return fields
 
 
 def _check_percent(source, translation, may_omit):
-    specs = _percent_specs(translation)
-    if specs is None:
-        return "a lone '%' (a literal percent sign must be written as '%%')"
-    named, unnamed = specs
-    source_specs = _percent_specs(source)
-    if source_specs is None:
-        # The source itself isn't a valid format string; nothing to compare
+    try:
+        source_named, source_unnamed = _percent_specs(source)
+    except _Invalid:
+        # msgfmt doesn't compare against an invalid source; neither do we,
+        # or a valid translation could never be written
         return None
-    source_named, source_unnamed = source_specs
+    try:
+        named, unnamed = _percent_specs(translation)
+    except _Invalid as e:
+        return str(e)
     extra = sorted(set(named) - set(source_named))
     if extra:
         return f"placeholders not in the source: {', '.join(extra)}"
@@ -108,12 +173,14 @@ def _check_percent(source, translation, may_omit):
 
 
 def _check_brace(source, translation, may_omit):
-    fields = _brace_fields(translation)
-    if fields is None:
-        return "an invalid {field} (e.g. an unmatched brace)"
-    source_fields = _brace_fields(source)
-    if source_fields is None:
+    try:
+        source_fields = _brace_fields(source)
+    except _Invalid:
         return None
+    try:
+        fields = _brace_fields(translation)
+    except _Invalid as e:
+        return str(e)
     extra = sorted(fields - source_fields)
     if extra:
         return f"fields not in the source: {', '.join('{' + f + '}' for f in extra)}"
