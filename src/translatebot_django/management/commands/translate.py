@@ -17,14 +17,29 @@ try:
     import tiktoken
     from litellm import LITELLM_EXCEPTION_TYPES, completion, get_model_info
     from litellm.exceptions import (
+        APIConnectionError,
         AuthenticationError,
+        BadGatewayError,
         BadRequestError,
+        InternalServerError,
         RateLimitError,
+        ServiceUnavailableError,
+        Timeout,
     )
 
     # Every error litellm raises; their only common base is openai's
     # APIError, which litellm doesn't re-export.
     _LITELLM_ERRORS = tuple(LITELLM_EXCEPTION_TYPES)
+    # Errors worth retrying after a short wait: the request may succeed
+    # once the network or the provider recovers. (Timeout is a subclass of
+    # APIConnectionError, listed for clarity.)
+    _TRANSIENT_ERRORS = (
+        Timeout,
+        APIConnectionError,
+        InternalServerError,
+        ServiceUnavailableError,
+        BadGatewayError,
+    )
     _has_litellm = True
 except ImportError:
     _has_litellm = False
@@ -42,11 +57,16 @@ except ImportError:
     class RateLimitError(Exception):  # type: ignore[no-redef]
         pass
 
+    class Timeout(Exception):  # type: ignore[no-redef]
+        pass
+
     _LITELLM_ERRORS = ()
+    _TRANSIENT_ERRORS = ()
 
 
 from translatebot_django.providers import get_provider
 from translatebot_django.utils import (
+    DEFAULT_TIMEOUT_SECONDS,
     combine_translation_contexts,
     get_all_po_paths,
     get_api_key,
@@ -60,6 +80,10 @@ logger = logging.getLogger(__name__)
 # Retry configuration for rate limit errors
 MAX_RETRIES = 5
 INITIAL_BACKOFF_SECONDS = 60  # Start with 60 seconds since rate limit is per minute
+
+# Retry configuration for transient errors (timeouts, connection errors, 5xx):
+# one wait per retry, so len() is the number of retries.
+TRANSIENT_BACKOFF_SECONDS = (5, 15)
 
 
 _LITELLM_MISSING_MSG = (
@@ -105,6 +129,14 @@ def handle_api_errors():
     except RateLimitError as e:
         raise CommandError(
             f"Rate limit still exceeded after {MAX_RETRIES} attempts: {e}\n"
+            f"{_PARTIAL_SAVE_NOTE}"
+        ) from e
+    except Timeout as e:
+        raise CommandError(
+            "The API did not respond in time, even after "
+            f"{len(TRANSIENT_BACKOFF_SECONDS)} retries: {e}\n"
+            "The provider may be overloaded or down. If your model is just slow, "
+            "raise TRANSLATEBOT_TIMEOUT (seconds) in your settings.\n"
             f"{_PARTIAL_SAVE_NOTE}"
         ) from e
     except TranslationValidationError as e:
@@ -296,8 +328,16 @@ def _output_shape(texts):
     ]
 
 
-def translate_text(text, target_lang, model, api_key, context=None, comments=None):
-    """Translate text by calling LiteLLM with retry logic for rate limits.
+def translate_text(
+    text,
+    target_lang,
+    model,
+    api_key,
+    context=None,
+    comments=None,
+    timeout=DEFAULT_TIMEOUT_SECONDS,
+):
+    """Translate text by calling LiteLLM, retrying rate limits and transient errors.
 
     Args:
         text: List of strings and/or :class:`PluralText` objects to translate
@@ -308,6 +348,8 @@ def translate_text(text, target_lang, model, api_key, context=None, comments=Non
         comments: Optional developer comments extracted from PO files (#.
                   lines): a dict mapping source strings to comments, or a
                   list aligned with *text*.
+        timeout: Seconds to wait for each API request before giving up on
+                 it (and retrying, see :data:`TRANSIENT_BACKOFF_SECONDS`).
 
     Returns:
         A list aligned with *text*: a string per plain text, and a list of
@@ -319,6 +361,7 @@ def translate_text(text, target_lang, model, api_key, context=None, comments=Non
     input_payload = _build_input_payload(text, comments)
 
     attempt = 0
+    transient_attempt = 0
     while True:
         try:
             # Suppress Pydantic serialization warnings from litellm.
@@ -349,6 +392,10 @@ def translate_text(text, target_lang, model, api_key, context=None, comments=Non
                     reasoning_effort="low",
                     drop_params=True,
                     api_key=api_key,
+                    timeout=timeout,
+                    # Retries happen below, with logging; the client's own
+                    # silent retries would multiply the timeout.
+                    max_retries=0,
                 )
             break  # Success, exit retry loop
         except RateLimitError as e:
@@ -365,6 +412,20 @@ def translate_text(text, target_lang, model, api_key, context=None, comments=Non
             )
             time.sleep(backoff)
             attempt += 1
+        except _TRANSIENT_ERRORS as e:
+            if transient_attempt >= len(TRANSIENT_BACKOFF_SECONDS):
+                raise
+            backoff = TRANSIENT_BACKOFF_SECONDS[transient_attempt]
+            logger.warning(
+                "%s from %s, waiting %ds before retry (%d/%d)...",
+                type(e).__name__,
+                model,
+                backoff,
+                transient_attempt + 1,
+                len(TRANSIENT_BACKOFF_SECONDS),
+            )
+            time.sleep(backoff)
+            transient_attempt += 1
 
     content = response.choices[0].message.content
     if content is None:

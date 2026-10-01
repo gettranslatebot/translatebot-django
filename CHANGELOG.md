@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `TRANSLATEBOT_TIMEOUT` setting: seconds to wait for each LLM API request (default 120). Previously no timeout was set, so a stalled provider could hang `translate` indefinitely.
+- LLM requests that time out, fail to connect, or get a server error (5xx) are retried twice, after 5 and 15 seconds, with a logged warning. The HTTP client's own silent retries are disabled so the timeout applies as configured.
+
 ### Fixed
 
 - PO files: messages that share a msgid but differ in `msgctxt` (`pgettext("month", "May")` vs `pgettext("permission", "May")`) are translated separately. They used to receive one shared translation, and the msgctxt is now sent to the LLM as a disambiguation hint.

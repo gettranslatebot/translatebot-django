@@ -8,7 +8,12 @@ from unittest.mock import MagicMock
 
 import polib
 import pytest
-from litellm.exceptions import APIConnectionError, RateLimitError
+from litellm.exceptions import (
+    APIConnectionError,
+    InternalServerError,
+    RateLimitError,
+    Timeout,
+)
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
@@ -481,7 +486,8 @@ def test_command_invalid_json_is_command_error(sample_po_file, mocker):
 
 @pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
 def test_command_connection_error_is_command_error(sample_po_file, mocker):
-    mocker.patch(
+    sleep = mocker.patch("translatebot_django.management.commands.translate.time.sleep")
+    completion = mocker.patch(
         "translatebot_django.management.commands.translate.completion",
         side_effect=APIConnectionError(
             message="Connection refused", llm_provider="openai", model="gpt-4o-mini"
@@ -491,6 +497,9 @@ def test_command_connection_error_is_command_error(sample_po_file, mocker):
     with pytest.raises(CommandError, match="APIConnectionError") as exc_info:
         call_command("translate", target_lang="nl")
     assert "have been saved" in str(exc_info.value)
+    # Retried twice after short waits before giving up
+    assert completion.call_count == 3
+    assert [c.args[0] for c in sleep.call_args_list] == [5, 15]
 
 
 @pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key", "mock_model_config")
@@ -725,3 +734,80 @@ def test_found_and_translated_counts_agree_across_files(
     assert result.strings_found == 2
     assert result.strings_translated == 2
     assert mock.call_count == (0 if dry_run else 1)
+
+
+# --- Request timeout and transient retries ---
+
+
+def _ok_response(payload):
+    response = MagicMock()
+    response.choices[0].message.content = json.dumps(payload)
+    return response
+
+
+def test_translate_text_passes_timeout_and_disables_client_retries(mocker):
+    completion = mocker.patch(
+        "translatebot_django.management.commands.translate.completion",
+        return_value=_ok_response(["Hallo"]),
+    )
+    translate_text(["Hello"], "nl", "gpt-4o-mini", "key", timeout=42)
+    kwargs = completion.call_args.kwargs
+    assert kwargs["timeout"] == 42
+    assert kwargs["max_retries"] == 0
+
+
+def test_translate_text_retries_transient_errors(mocker, caplog):
+    sleep = mocker.patch("translatebot_django.management.commands.translate.time.sleep")
+    mocker.patch(
+        "translatebot_django.management.commands.translate.completion",
+        side_effect=[
+            Timeout(message="slow", llm_provider="deepseek", model="deepseek-chat"),
+            InternalServerError(
+                message="boom", llm_provider="deepseek", model="deepseek-chat"
+            ),
+            _ok_response(["Hallo"]),
+        ],
+    )
+    assert translate_text(["Hello"], "nl", "deepseek/deepseek-chat", "key") == ["Hallo"]
+    assert [c.args[0] for c in sleep.call_args_list] == [5, 15]
+    assert "Timeout from deepseek/deepseek-chat, waiting 5s before retry (1/2)" in (
+        caplog.text
+    )
+
+
+@pytest.mark.usefixtures("temp_locale_dir", "mock_env_api_key")
+def test_command_timeout_exhausted_is_command_error(sample_po_file, settings, mocker):
+    settings.TRANSLATEBOT_MODEL = "deepseek/deepseek-chat"
+    settings.TRANSLATEBOT_TIMEOUT = 30
+    mocker.patch("translatebot_django.management.commands.translate.time.sleep")
+    completion = mocker.patch(
+        "translatebot_django.management.commands.translate.completion",
+        side_effect=Timeout(
+            message="Connection timed out",
+            llm_provider="deepseek",
+            model="deepseek-chat",
+        ),
+    )
+
+    with pytest.raises(CommandError, match="did not respond in time") as exc_info:
+        call_command("translate", target_lang="nl")
+    assert "TRANSLATEBOT_TIMEOUT" in str(exc_info.value)
+    assert completion.call_count == 3
+    assert completion.call_args.kwargs["timeout"] == 30
+
+
+@pytest.mark.parametrize("value", [0, -5, "60", None, True])
+def test_get_timeout_rejects_invalid_values(settings, value):
+    from translatebot_django.utils import get_timeout
+
+    settings.TRANSLATEBOT_TIMEOUT = value
+    with pytest.raises(CommandError, match="TRANSLATEBOT_TIMEOUT"):
+        get_timeout()
+
+
+def test_get_timeout_default_and_float(settings):
+    from translatebot_django.utils import DEFAULT_TIMEOUT_SECONDS, get_timeout
+
+    assert get_timeout() == DEFAULT_TIMEOUT_SECONDS == 120
+    settings.TRANSLATEBOT_TIMEOUT = 7.5
+    assert get_timeout() == 7.5

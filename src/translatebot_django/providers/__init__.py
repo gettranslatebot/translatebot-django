@@ -96,10 +96,12 @@ def get_provider(api_key, model=None):
         if not _has_litellm:
             raise CommandError(_LITELLM_MISSING_MSG)
         from translatebot_django.providers.litellm import LiteLLMProvider
-        from translatebot_django.utils import get_model
+        from translatebot_django.utils import get_model, get_timeout
 
         effective_model = model if model is not None else get_model()
-        return LiteLLMProvider(model=effective_model, api_key=api_key)
+        return LiteLLMProvider(
+            model=effective_model, api_key=api_key, timeout=get_timeout()
+        )
 
     if provider_name == "deepl":
         if model is not None:
