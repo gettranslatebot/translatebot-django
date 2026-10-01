@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- PO translations are validated before they are written, using the same rules `msgfmt --check-format` (run by `compilemessages`) applies to `python-format` and `python-brace-format` entries: placeholders must match the source, and a literal percent sign must stay `%%`. Plural forms may leave a placeholder out (e.g. Arabic "one file"). Translations that are index markers (`#1`, `#2`, …) or empty are rejected too.
+- Rejected translations are retried once, on their own. If they fail again, the message is left untranslated with a warning, so it never breaks `compilemessages`; `check_translations` reports it and the next run tries again.
+- A response that fails validation as a whole (wrong number of translations, invalid JSON) is retried once before the run stops.
+
 ## [1.4.1] - 2026-10-01
 
 ### Fixed

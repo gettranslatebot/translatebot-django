@@ -80,6 +80,7 @@ from translatebot_django.utils import (
     get_translation_context,
     is_modeltranslation_available,
 )
+from translatebot_django.validation import FORMAT_FLAGS, translation_problem
 
 logger = logging.getLogger(__name__)
 
@@ -664,6 +665,9 @@ class POUnit:
             file's ``Plural-Forms`` header (see
             :func:`plural_forms_from_header`), or None if unknown.
         nplurals: Number of plural forms to write.
+        formats: The entry's format flags (``python-format``,
+            ``python-brace-format``), which decide how placeholders in the
+            translation are checked.
     """
 
     msgctxt: str | None
@@ -672,6 +676,7 @@ class POUnit:
     comment: str | None = None
     plural_forms: tuple[str, ...] | None = None
     nplurals: int = 2
+    formats: frozenset = frozenset()
 
     @property
     def key(self):
@@ -686,6 +691,7 @@ class POUnit:
         """
         if other.comment:
             self.comment = other.comment
+        self.formats |= other.formats
         if other.msgid_plural is None:
             return
         if self.msgid_plural is None:
@@ -697,6 +703,23 @@ class POUnit:
         ):
             self.plural_forms = other.plural_forms
             self.nplurals = other.nplurals
+
+    def problem(self, text, result):
+        """Why a provider's *result* for one of :meth:`provider_texts` can't
+        be written, or None if it can."""
+        if isinstance(text, PluralText):
+            if not isinstance(result, list):
+                return "not a list of plural forms"
+            for form in result:
+                problem = translation_problem(
+                    (text.singular, text.plural), form, self.formats, plural=True
+                )
+                if problem:
+                    return problem
+            return None
+        return translation_problem(
+            (text,), result, self.formats, plural=self.msgid_plural is not None
+        )
 
     def provider_texts(self, plural_aware):
         """The texts to send to a provider for this message."""
@@ -731,6 +754,13 @@ class POUnit:
             if "1" in examples.split(", "):
                 return index
         return 0
+
+
+@dataclasses.dataclass(frozen=True)
+class _Rejected:
+    """A translation that failed validation twice; it is not written."""
+
+    problem: str
 
 
 class PluralForms(list):
@@ -799,6 +829,7 @@ def gather_entries(po_path, include_translated=False):
             nplurals=(
                 len(plural_forms) if plural_forms else len(entry.msgstr_plural) or 2
             ),
+            formats=frozenset(entry.flags) & FORMAT_FLAGS,
         )
 
     return list(units.values())
@@ -1221,17 +1252,22 @@ class Command(BaseCommand):
         """Translate *units* in batches, saving *po_paths* after each batch.
 
         Adds each translation to *translations*, keyed by ``(msgctxt, msgid)``.
+        Translations that fail :meth:`POUnit.problem` (e.g. a dropped
+        placeholder) are retried once; messages that still fail are left
+        untranslated, so they never break ``compilemessages``.
         """
         # Flatten to provider texts, remembering which slice of them
         # belongs to which message (a message may span two texts).
         texts = []
         text_comments = []
+        owners = []  # the unit each text belongs to
         spans = []
         for unit in units:
             start = len(texts)
             for text in unit.provider_texts(provider.supports_plural_forms):
                 texts.append(text)
                 text_comments.append(unit.comment)
+                owners.append(unit)
             spans.append((start, len(texts)))
 
         groups = provider.batch(texts, target_lang, comments=text_comments)
@@ -1241,32 +1277,102 @@ class Command(BaseCommand):
             done = 0
             for batch_num, group in enumerate(groups, 1):
                 start = len(results)
-                batch_comments = text_comments[start : start + len(group)]
-                translated = provider.translate(
-                    texts=group,
-                    target_lang=target_lang,
-                    context=context,
-                    comments=batch_comments if any(batch_comments) else None,
+                indices = range(start, start + len(group))
+                translated = self._translate_checked(
+                    provider,
+                    texts,
+                    text_comments,
+                    owners,
+                    indices,
+                    target_lang,
+                    context,
                 )
-                if len(translated) != len(group):
-                    raise TranslationValidationError(
-                        f"{provider.name} returned {len(translated)} "
-                        f"translations, expected {len(group)}."
-                    )
                 results.extend(translated)
 
                 # Record every message whose texts are now all translated
                 while done < len(units) and spans[done][1] <= len(results):
-                    unit_start, unit_end = spans[done]
-                    translations[units[done].key] = units[done].translation_from(
-                        results[unit_start:unit_end]
-                    )
+                    unit = units[done]
+                    unit_results = results[slice(*spans[done])]
+                    failed = [r for r in unit_results if isinstance(r, _Rejected)]
+                    if failed:
+                        self.stdout.write(
+                            self.style.WARNING(
+                                f"⚠️  Left {unit.msgid[:50]!r} untranslated: the "
+                                f"translation had {failed[0].problem}, also on retry."
+                            )
+                        )
+                    else:
+                        translations[unit.key] = unit.translation_from(unit_results)
                     done += 1
 
                 # Save PO files after each batch so translations
                 # aren't lost if a later batch fails
                 self._save_po_translations(po_paths, translations, overwrite=overwrite)
                 self.stdout.write(f"  💾 Saved batch {batch_num}/{len(groups)}")
+
+    @staticmethod
+    def _translate_checked(
+        provider, texts, comments, owners, indices, target_lang, context
+    ):
+        """Translate ``texts[i]`` for *indices*, retrying what fails validation.
+
+        A response that fails validation as a whole (wrong count, not JSON)
+        is retried once before the error is raised. Individual translations
+        with a problem are retried once together; those still failing are
+        returned as :class:`_Rejected`.
+        """
+
+        def request(batch_indices):
+            batch = [texts[i] for i in batch_indices]
+            batch_comments = [comments[i] for i in batch_indices]
+            translated = provider.translate(
+                texts=batch,
+                target_lang=target_lang,
+                context=context,
+                comments=batch_comments if any(batch_comments) else None,
+            )
+            if len(translated) != len(batch):
+                raise TranslationValidationError(
+                    f"{provider.name} returned {len(translated)} "
+                    f"translations, expected {len(batch)}."
+                )
+            return translated
+
+        indices = list(indices)
+        try:
+            translated = request(indices)
+        except TranslationValidationError as e:
+            logger.warning(
+                "Invalid response from %s (%s), retrying...", provider.name, e
+            )
+            translated = request(indices)
+        results = dict(zip(indices, translated, strict=True))
+
+        def problems(candidates):
+            found = {}
+            for i in candidates:
+                problem = owners[i].problem(texts[i], results[i])
+                if problem:
+                    found[i] = problem
+            return found
+
+        failing = problems(indices)
+        if failing:
+            logger.warning(
+                "%d translation(s) from %s failed validation (e.g. %s), retrying...",
+                len(failing),
+                provider.name,
+                next(iter(failing.values())),
+            )
+            retry = list(failing)
+            try:
+                results.update(zip(retry, request(retry), strict=True))
+                failing = problems(retry)
+            except TranslationValidationError as e:
+                failing = dict.fromkeys(retry, f"an invalid response ({e})")
+            for i, problem in failing.items():
+                results[i] = _Rejected(problem)
+        return [results[i] for i in indices]
 
     def _translate_model_fields(
         self,
