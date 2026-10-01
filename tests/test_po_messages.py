@@ -658,3 +658,70 @@ def test_strings_translated_counts_only_written_entries(
     assert polib.pofile(str(lc / "django.po"))[0].msgstr == "Bewaren"
     if not dry_run:
         assert polib.pofile(str(lc / "djangojs.po"))[0].msgstr == "Opslaan"
+
+
+# --- Second review round ---
+
+ARABIC_PLURAL_FORMS = (
+    "nplurals=6; plural=n==0 ? 0 : n==1 ? 1 : n==2 ? 2 : "
+    "n%100>=3 && n%100<=10 ? 3 : n%100>=11 ? 4 : 5;"
+)
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_plain_duplicate_gets_singular_form_not_form_zero(temp_locale_dir, mocker):
+    """In Arabic, msgstr[0] is the zero form; a plain entry merged with a
+    plural one must get the form used for a count of 1."""
+    lc = temp_locale_dir / "ar" / "LC_MESSAGES"
+    plural_po = _write_po(
+        lc / "django.po",
+        [
+            polib.POEntry(
+                msgid="Item",
+                msgid_plural="Items",
+                msgstr_plural=dict.fromkeys(range(6), ""),
+            )
+        ],
+        plural_forms=ARABIC_PLURAL_FORMS,
+    )
+    plain_po = _write_po(
+        lc / "djangojs.po",
+        [polib.POEntry(msgid="Item", msgstr="")],
+        plural_forms=ARABIC_PLURAL_FORMS,
+    )
+    forms = ["zero", "one", "two", "few", "many", "other"]
+    mock = _llm_response(mocker, [forms])
+
+    call_command("translate", target_lang="ar")
+
+    assert _sent_payload(mock)[0]["plural_forms"][:3] == ["0", "1", "2"]
+    assert polib.pofile(str(plural_po))[0].msgstr_plural == dict(enumerate(forms))
+    assert polib.pofile(str(plain_po))[0].msgstr == "one"
+
+
+def test_po_unit_singular_falls_back_to_first_form():
+    unit = POUnit(None, "Item", "Items", plural_forms=("0", "2"), nplurals=2)
+    assert unit.translation_from([["a", "b"]]).singular == "a"
+    two_strings = POUnit(None, "Item", "Items", nplurals=3)
+    assert two_strings.translation_from(["s", "p"]).singular == "s"
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_found_and_translated_counts_agree_across_files(
+    temp_locale_dir, mock_completion, dry_run
+):
+    """A msgid untranslated in two files is sent once, but found and
+    translated are both counted per file."""
+    lc = temp_locale_dir / "nl" / "LC_MESSAGES"
+    for name in ("django.po", "djangojs.po"):
+        _write_po(lc / name, [polib.POEntry(msgid="Save", msgstr="")])
+    mock = mock_completion("Opslaan")
+
+    from translatebot_django import translate
+
+    result = translate(target_langs="nl", dry_run=dry_run)
+
+    assert result.strings_found == 2
+    assert result.strings_translated == 2
+    assert mock.call_count == (0 if dry_run else 1)

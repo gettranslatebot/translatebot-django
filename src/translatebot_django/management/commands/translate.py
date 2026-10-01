@@ -612,11 +612,34 @@ class POUnit:
             return results[0]
         if len(results) == 1:
             # A PluralText: the provider translated every form itself
-            return results[0]
+            forms = results[0]
+            return PluralForms(forms, singular=forms[self._singular_index()])
         # Singular and plural were translated as two plain strings; reuse
         # the plural translation for every form past the first.
         singular, plural = results
-        return [singular] + [plural] * (self.nplurals - 1)
+        return PluralForms(
+            [singular] + [plural] * (self.nplurals - 1), singular=singular
+        )
+
+    def _singular_index(self):
+        """Index of the plural form used for a count of 1 (not always 0:
+        Arabic's form 0 is for zero)."""
+        for index, examples in enumerate(self.plural_forms or ()):
+            if "1" in examples.split(", "):
+                return index
+        return 0
+
+
+class PluralForms(list):
+    """The translated plural forms of a message, in ``msgstr[n]`` order.
+
+    *singular* is the form for a count of 1, written to plain (non-plural)
+    entries of the same message in other PO files.
+    """
+
+    def __init__(self, forms, singular):
+        super().__init__(forms)
+        self.singular = singular
 
 
 def _entry_comment(entry):
@@ -913,6 +936,8 @@ class Command(BaseCommand):
                     entry.msgstr_plural = {
                         i: forms[min(i, len(forms) - 1)] for i in range(count)
                     }
+                elif isinstance(value, PluralForms):
+                    entry.msgstr = value.singular
                 else:
                     entry.msgstr = forms[0]
                 if entry.fuzzy:
@@ -979,7 +1004,9 @@ class Command(BaseCommand):
             if units:
                 work.append((effective_context, group_po_paths, list(units.values())))
 
-        total_msgids = sum(len(units) for _, _, units in work)
+        # Counted per file, like strings_translated: a message shared by
+        # several files is sent once but written (and counted) per file
+        total_msgids = sum(len(keys) for keys in pending.values())
 
         # Early return with minimal output if nothing to translate
         if total_msgids == 0:
