@@ -25,7 +25,7 @@ TranslateBot is a dedicated tool that sits between "do it by hand" and "pay for 
 - **Cost-efficient.** Batches strings into optimized API requests. A typical app costs under $0.01 per language with GPT-4o-mini.
 - **Scales to many languages.** One command translates all your configured languages. Adding a new locale is a one-liner.
 - **Automatable.** A CLI command you can script or hook into your workflow. No browser, no portal.
-- **Placeholder-safe.** Keeps `%(name)s`, `{0}`, `%s`, and HTML tags intact: the model is instructed to preserve them, and with DeepL placeholders are swapped for protected tokens and HTML goes through DeepL's tag handling. `compilemessages` catches a placeholder mismatch in `python-format` strings; HTML tags aren't checked, so review HTML-heavy strings.
+- **Placeholder-safe.** Keeps `%(name)s`, `{0}`, `%s`, and HTML tags intact: the model is instructed to preserve them, and with DeepL placeholders are swapped for protected tokens and HTML goes through DeepL's tag handling. `compilemessages` catches a placeholder mismatch in `python-format` strings.
 - **Grammar-aware.** With LLM providers, every plural form of the target language gets its own translation (Polish, Russian, Arabic, …), and `pgettext` contexts keep "May" the month apart from "May" the verb.
 
 ## Installation
