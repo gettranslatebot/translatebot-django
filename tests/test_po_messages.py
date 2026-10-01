@@ -6,10 +6,12 @@ file translation.
 import json
 from unittest.mock import MagicMock
 
+import httpx
 import polib
 import pytest
 from litellm.exceptions import (
     APIConnectionError,
+    APIError,
     InternalServerError,
     RateLimitError,
     Timeout,
@@ -808,6 +810,94 @@ def test_get_timeout_rejects_invalid_values(settings, value):
 def test_get_timeout_default_and_float(settings):
     from translatebot_django.utils import DEFAULT_TIMEOUT_SECONDS, get_timeout
 
-    assert get_timeout() == DEFAULT_TIMEOUT_SECONDS == 120
+    assert get_timeout() == DEFAULT_TIMEOUT_SECONDS == 300
     settings.TRANSLATEBOT_TIMEOUT = 7.5
     assert get_timeout() == 7.5
+
+
+def _rate_limit(headers=None, litellm_headers=None):
+    response = httpx.Response(
+        429, headers=headers or {}, request=httpx.Request("POST", "https://x")
+    )
+    error = RateLimitError(
+        message="Too many requests",
+        llm_provider="openai",
+        model="gpt-4o-mini",
+        response=response,
+    )
+    if litellm_headers is not None:
+        error.litellm_response_headers = litellm_headers
+    return error
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_wait"),
+    [
+        (_rate_limit({"retry-after": "3"}), 3),
+        (_rate_limit({"retry-after-ms": "1500"}), 2),
+        (_rate_limit({"retry-after": "0"}), 1),
+        (_rate_limit({"retry-after": "900"}), 60),  # never longer than ours
+        (_rate_limit({"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT"}), 60),
+        (_rate_limit(litellm_headers={"retry-after": "7"}), 7),
+        (_rate_limit({"retry-after": "4"}, litellm_headers={"x-other": "1"}), 4),
+        (_rate_limit(), 60),
+    ],
+)
+def test_rate_limit_honours_retry_after(mocker, error, expected_wait):
+    sleep = mocker.patch("translatebot_django.management.commands.translate.time.sleep")
+    mocker.patch(
+        "translatebot_django.management.commands.translate.completion",
+        side_effect=[error, _ok_response(["Hallo"])],
+    )
+    assert translate_text(["Hello"], "nl", "gpt-4o-mini", "key") == ["Hallo"]
+    assert sleep.call_args.args[0] == expected_wait
+
+
+def test_generic_5xx_api_error_is_retried(mocker):
+    sleep = mocker.patch("translatebot_django.management.commands.translate.time.sleep")
+    mocker.patch(
+        "translatebot_django.management.commands.translate.completion",
+        side_effect=[
+            APIError(status_code=522, message="cf", llm_provider="openai", model="m"),
+            _ok_response(["Hallo"]),
+        ],
+    )
+    assert translate_text(["Hello"], "nl", "gpt-4o-mini", "key") == ["Hallo"]
+    assert sleep.call_count == 1
+
+
+@pytest.mark.parametrize("status_code", [418, None])
+def test_non_5xx_api_error_is_not_retried(mocker, status_code):
+    sleep = mocker.patch("translatebot_django.management.commands.translate.time.sleep")
+    error = APIError(
+        status_code=418, message="teapot", llm_provider="openai", model="m"
+    )
+    error.status_code = status_code
+    mocker.patch(
+        "translatebot_django.management.commands.translate.completion",
+        side_effect=error,
+    )
+    with pytest.raises(APIError):
+        translate_text(["Hello"], "nl", "gpt-4o-mini", "key")
+    sleep.assert_not_called()
+
+
+@pytest.mark.parametrize("header", [None, "nplurals=INTEGER; plural=EXPRESSION;"])
+def test_gather_entries_warns_about_unusable_plural_forms(tmp_path, caplog, header):
+    po_path = _write_po(
+        tmp_path / "django.po",
+        [
+            polib.POEntry(
+                msgid="%(n)d file", msgid_plural="%(n)d files", msgstr_plural={0: ""}
+            )
+        ],
+        plural_forms=header,
+    )
+    gather_entries(po_path)
+    assert "no usable Plural-Forms header" in caplog.text
+
+
+def test_gather_entries_no_plural_warning_without_plural_entries(tmp_path, caplog):
+    po_path = _write_po(tmp_path / "django.po", [polib.POEntry(msgid="a", msgstr="")])
+    gather_entries(po_path)
+    assert "Plural-Forms" not in caplog.text

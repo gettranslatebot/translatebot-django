@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `TRANSLATEBOT_TIMEOUT` setting: seconds to wait for each LLM API request (default 120). Previously no timeout was set, so a stalled provider could hang `translate` indefinitely.
-- LLM requests that time out, fail to connect, or get a server error (5xx) are retried twice, after 5 and 15 seconds, with a logged warning. The HTTP client's own silent retries are disabled so the timeout applies as configured.
+- `TRANSLATEBOT_TIMEOUT` setting: seconds to wait for each LLM API request (default 300). Previously no timeout was set, so a stalled provider could hang `translate` indefinitely.
+- LLM requests that time out, fail to connect, or get a server error (5xx) are retried twice, after 5 and 15 seconds, with a logged warning. The HTTP client's own silent retries are disabled so the timeout applies as configured; rate-limit retries now honour the provider's `Retry-After` instead of always waiting at least 60 seconds.
+- A warning is logged for PO files with plural entries but no usable `Plural-Forms` header (missing, or makemessages' `nplurals=INTEGER` placeholder); their plural forms can't be translated individually.
 
 ### Fixed
 

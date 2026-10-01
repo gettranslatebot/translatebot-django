@@ -2,6 +2,7 @@ import dataclasses
 import gettext
 import json
 import logging
+import math
 import re
 import time
 import warnings
@@ -18,6 +19,7 @@ try:
     from litellm import LITELLM_EXCEPTION_TYPES, completion, get_model_info
     from litellm.exceptions import (
         APIConnectionError,
+        APIError,
         AuthenticationError,
         BadGatewayError,
         BadRequestError,
@@ -31,8 +33,9 @@ try:
     # APIError, which litellm doesn't re-export.
     _LITELLM_ERRORS = tuple(LITELLM_EXCEPTION_TYPES)
     # Errors worth retrying after a short wait: the request may succeed
-    # once the network or the provider recovers. (Timeout is a subclass of
-    # APIConnectionError, listed for clarity.)
+    # once the network or the provider recovers. Timeout must be listed:
+    # litellm's Timeout and APIConnectionError don't inherit from each other.
+    # Generic APIErrors with a 5xx status are retried too (_is_transient).
     _TRANSIENT_ERRORS = (
         Timeout,
         APIConnectionError,
@@ -60,6 +63,9 @@ except ImportError:
     class Timeout(Exception):  # type: ignore[no-redef]
         pass
 
+    class APIError(Exception):  # type: ignore[no-redef]
+        pass
+
     _LITELLM_ERRORS = ()
     _TRANSIENT_ERRORS = ()
 
@@ -84,6 +90,35 @@ INITIAL_BACKOFF_SECONDS = 60  # Start with 60 seconds since rate limit is per mi
 # Retry configuration for transient errors (timeouts, connection errors, 5xx):
 # one wait per retry, so len() is the number of retries.
 TRANSIENT_BACKOFF_SECONDS = (5, 15)
+
+
+def _is_transient(exc):
+    """Whether a litellm error is worth retrying after a short wait."""
+    if isinstance(exc, _TRANSIENT_ERRORS):
+        return True
+    # litellm raises a generic APIError for 5xx responses it doesn't map to
+    # a specific class (e.g. Cloudflare's 520-524 in front of a provider)
+    status = getattr(exc, "status_code", None)
+    return isinstance(exc, APIError) and isinstance(status, int) and status >= 500
+
+
+def _retry_after_seconds(exc):
+    """The wait a rate-limit error asks for (Retry-After), or None."""
+    candidates = [getattr(exc, "litellm_response_headers", None)]
+    response = getattr(exc, "response", None)
+    candidates.append(getattr(response, "headers", None))
+    for headers in candidates:
+        if not headers:
+            continue
+        try:
+            if headers.get("retry-after-ms") is not None:
+                return float(headers["retry-after-ms"]) / 1000
+            if headers.get("retry-after") is not None:
+                return float(headers["retry-after"])
+        except (TypeError, ValueError):
+            # e.g. an HTTP-date Retry-After; fall back to our own backoff
+            continue
+    return None
 
 
 _LITELLM_MISSING_MSG = (
@@ -402,8 +437,13 @@ def translate_text(
             if attempt >= MAX_RETRIES - 1:
                 # All retries exhausted, re-raise the exception
                 raise e from None
-            # Exponential backoff: 60s, 120s, 240s, 480s
+            # Exponential backoff: 60s, 120s, 240s, 480s, or sooner when
+            # the provider says when to retry (the client's own quick 429
+            # retries are disabled, see max_retries above)
             backoff = INITIAL_BACKOFF_SECONDS * (2**attempt)
+            retry_after = _retry_after_seconds(e)
+            if retry_after is not None:
+                backoff = min(backoff, max(1, math.ceil(retry_after)))
             logger.warning(
                 "Rate limit hit, waiting %ds before retry (%d/%d)...",
                 backoff,
@@ -412,8 +452,10 @@ def translate_text(
             )
             time.sleep(backoff)
             attempt += 1
-        except _TRANSIENT_ERRORS as e:
-            if transient_attempt >= len(TRANSIENT_BACKOFF_SECONDS):
+        except _LITELLM_ERRORS as e:
+            if not _is_transient(e) or transient_attempt >= len(
+                TRANSIENT_BACKOFF_SECONDS
+            ):
                 raise
             backoff = TRANSIENT_BACKOFF_SECONDS[transient_attempt]
             logger.warning(
@@ -730,6 +772,14 @@ def gather_entries(po_path, include_translated=False):
     """
     po = polib.pofile(str(po_path), wrapwidth=79)
     plural_forms = plural_forms_from_header(po.metadata.get("Plural-Forms"))
+    if plural_forms is None and any(e.msgid_plural for e in po):
+        logger.warning(
+            "%s has no usable Plural-Forms header (got %r); its plural "
+            "entries get the singular and plural translation only. Set the "
+            "header for the language, e.g. by re-running makemessages.",
+            po_path,
+            po.metadata.get("Plural-Forms"),
+        )
     units = {}
 
     for entry in po:

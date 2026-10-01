@@ -2586,6 +2586,7 @@ def test_litellm_import_error_creates_sentinel_classes():
         assert mod._LITELLM_ERRORS == ()
         assert mod._TRANSIENT_ERRORS == ()
         assert issubclass(mod.Timeout, Exception)
+        assert issubclass(mod.APIError, Exception)
     finally:
         # Restore original module entries and reload to reset state
         for k, v in original_modules.items():

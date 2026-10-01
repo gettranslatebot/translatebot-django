@@ -8,9 +8,10 @@ from django.utils.translation import to_locale
 PO_FILENAMES = ("django.po", "djangojs.po")
 
 # Seconds to wait for one LLM API request (TRANSLATEBOT_TIMEOUT). Generous
-# enough for a full batch on a slow model, short enough that a stalled
-# provider fails the run instead of hanging it.
-DEFAULT_TIMEOUT_SECONDS = 120
+# enough for a full batch (PRACTICAL_OUTPUT_BUDGET output tokens) at ~27
+# tokens/s, short enough that a stalled provider fails the run instead of
+# hanging it.
+DEFAULT_TIMEOUT_SECONDS = 300
 
 
 def get_model():
