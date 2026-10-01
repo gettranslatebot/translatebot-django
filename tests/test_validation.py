@@ -5,6 +5,9 @@ the translate command.
 """
 
 import json
+import os
+import shutil
+import subprocess
 from unittest.mock import MagicMock
 
 import polib
@@ -19,95 +22,349 @@ PY = frozenset({"python-format"})
 BRACE = frozenset({"python-brace-format"})
 
 
-# --- translation_problem ---
+# --- translation_problem, cross-checked against msgfmt ---
+
+LANGS = {
+    "en": "nplurals=2; plural=(n != 1);",
+    "fr": "nplurals=2; plural=(n > 1);",
+    "ja": "nplurals=1; plural=0;",
+    "ar": (
+        "nplurals=6; plural=n==0 ? 0 : n==1 ? 1 : n==2 ? 2 : "
+        "n%100>=3 && n%100<=10 ? 3 : n%100>=11 ? 4 : 5;"
+    ),
+}
+
+# (description, language, flag, msgid, msgid_plural or None, msgstr(s), valid)
+CASES = [
+    # Seen with DeepSeek V4 Pro: a literal %% written as a lone % ...
+    (
+        "lone %",
+        "en",
+        PY,
+        "TranslateBot is 100%% free.",
+        None,
+        "TranslateBot ist 100 % kostenlos.",
+        False,
+    ),
+    ("lone % at end", "en", PY, "100%%", None, "100%", False),
+    # ... or as "%i", which is a conversion of its own
+    ("%% -> %i", "en", PY, "100%% test coverage", None, "100%ige Testabdeckung", False),
+    ("%% kept", "en", PY, "100%% free", None, "100%% frei", True),
+    ("named kept", "en", PY, "Hello %(name)s", None, "Hallo %(name)s", True),
+    ("named reordered", "en", PY, "%(a)s and %(b)s", None, "%(b)s und %(a)s", True),
+    ("named missing", "en", PY, "Hello %(name)s", None, "Hallo", False),
+    ("named renamed", "en", PY, "Hello %(name)s", None, "Hallo %(naam)s", False),
+    ("named width", "en", PY, "%(n)d file", None, "%(n)5d Datei", True),
+    ("named d -> i", "en", PY, "%(n)d file", None, "%(n)i Datei", True),
+    ("named d -> x", "en", PY, "%(n)d file", None, "%(n)x Datei", True),
+    ("named d -> s", "en", PY, "%(n)d file", None, "%(n)s fichier", False),
+    ("named d -> f", "en", PY, "%(n)d file", None, "%(n)f fichier", False),
+    ("named f -> g", "en", PY, "%(n)f x", None, "%(n)g y", True),
+    ("named s -> r", "en", PY, "%(n)s file", None, "%(n)r fichier", True),
+    ("named c -> s", "en", PY, "%(n)c x", None, "%(n)s y", False),
+    ("%F is invalid", "en", PY, "%(n)f x", None, "%(n)F y", False),
+    ("unnamed kept", "en", PY, "%s of %d", None, "%s von %d", True),
+    ("unnamed compatible", "en", PY, "%d of %s", None, "%i von %r", True),
+    ("unnamed swapped", "en", PY, "%d of %s", None, "%s von %d", False),
+    ("unnamed missing", "en", PY, "%s of %d", None, "%s", False),
+    ("unnamed * width", "en", PY, "%*d x", None, "%*d y", True),
+    ("mixed named and unnamed", "en", PY, "%(n)d and %s", None, "%(n)d und %s", True),
+    ("unflagged % is text", "en", frozenset(), "100% free", None, "100 % frei", True),
+    # Plural forms are compared with msgid_plural. Named placeholders may be
+    # left out when the language has more than one form; unnamed may not.
+    (
+        "en plural omits named",
+        "en",
+        PY,
+        "%(n)d file",
+        "%(n)d files",
+        ["one file", "%(n)d files"],
+        True,
+    ),
+    (
+        "en plural omits named everywhere",
+        "en",
+        PY,
+        "%(n)d file",
+        "%(n)d files",
+        ["one file", "files"],
+        True,
+    ),
+    (
+        "fr form 0 (0 and 1) omits named",
+        "fr",
+        PY,
+        "%(n)d file",
+        "%(n)d files",
+        ["un fichier", "%(n)d fichiers"],
+        True,
+    ),
+    (
+        "ar omits named",
+        "ar",
+        PY,
+        "%(n)d file",
+        "%(n)d files",
+        ["لا ملفات", "ملف واحد", "ملفان", "%(n)d ملفات", "%(n)d ملفًا", "%(n)d ملف"],
+        True,
+    ),
+    (
+        "ja only form omits named",
+        "ja",
+        PY,
+        "%(n)d file",
+        "%(n)d files",
+        ["ファイル"],
+        False,
+    ),
+    (
+        "ja only form keeps named",
+        "ja",
+        PY,
+        "%(n)d file",
+        "%(n)d files",
+        ["%(n)d ファイル"],
+        True,
+    ),
+    (
+        "en plural omits unnamed",
+        "en",
+        PY,
+        "%d file",
+        "%d files",
+        ["one file", "%d files"],
+        False,
+    ),
+    (
+        "fr plural omits unnamed",
+        "fr",
+        PY,
+        "%d file",
+        "%d files",
+        ["un fichier", "%d fichiers"],
+        False,
+    ),
+    (
+        "plural adds named",
+        "en",
+        PY,
+        "%(n)d file",
+        "%(n)d files",
+        ["%(n)d %(x)s", "%(n)d files"],
+        False,
+    ),
+    (
+        "plural changes type",
+        "en",
+        PY,
+        "%(n)d file",
+        "%(n)d files",
+        ["%(n)s file", "%(n)d files"],
+        False,
+    ),
+    (
+        "plural form uses msgid-only name",
+        "en",
+        PY,
+        "%(a)s file",
+        "files",
+        ["%(a)s Datei", "Dateien"],
+        False,
+    ),
+    (
+        "plural without placeholder in msgid",
+        "en",
+        PY,
+        "One file",
+        "%(n)d files",
+        ["Eine Datei", "%(n)d Dateien"],
+        True,
+    ),
+    # python-brace-format
+    ("brace kept", "en", BRACE, "Hi {name}", None, "Hallo {name}", True),
+    ("brace reordered", "en", BRACE, "{0} and {1}", None, "{1} et {0}", True),
+    (
+        "brace literal braces",
+        "en",
+        BRACE,
+        "Use {{x}} and {y!r:>5}",
+        None,
+        "Gebruik {{x}} en {y!r:>5}",
+        True,
+    ),
+    ("brace missing", "en", BRACE, "Hi {name}", None, "Salut", False),
+    ("brace renamed", "en", BRACE, "Hi {name}", None, "Salut {nom}", False),
+    ("brace auto kept", "en", BRACE, "{} and {}", None, "{} et {}", True),
+    ("brace auto dropped", "en", BRACE, "{} and {}", None, "{} et", False),
+    ("brace unterminated", "en", BRACE, "Hi {name}", None, "Salut {name", False),
+    (
+        "brace plural omits",
+        "en",
+        BRACE,
+        "{n} file",
+        "{n} files",
+        ["one file", "{n} files"],
+        True,
+    ),
+    (
+        "brace plural omits auto",
+        "en",
+        BRACE,
+        "{} file",
+        "{} files",
+        ["one file", "{} files"],
+        True,
+    ),
+    ("brace ja omits", "ja", BRACE, "{n} file", "{n} files", ["ファイル"], False),
+]
 
 
-@pytest.mark.parametrize(
-    ("source", "translation"),
-    [
-        ("TranslateBot is 100%% free.", "TranslateBot ist 100%% kostenlos."),
-        ("Hello %(name)s", "Hallo %(name)s"),
-        ("%(a)s and %(b)s", "%(b)s und %(a)s"),
-        ("%s of %d", "%s von %d"),
-        ("Width: %-5.2f%%", "Breite: %-5.2f%%"),
-    ],
-)
-def test_python_format_ok(source, translation):
-    assert translation_problem((source,), translation, PY) is None
-
-
-@pytest.mark.parametrize(
-    ("source", "translation", "expected"),
-    [
-        # Seen with DeepSeek V4 Pro: a literal %% written as a lone %
-        ("TranslateBot is 100%% free.", "TranslateBot ist 100 % kostenlos.", "lone"),
-        # ... or as "%i", which is a conversion of its own
-        ("100%% test coverage", "100%ige Testabdeckung", "1 unnamed"),
-        ("Hello %(name)s", "Hallo", "missing placeholders: name"),
-        ("Hello %(name)s", "Hallo %(naam)s", "not in the source: naam"),
-        ("%s of %d", "%s", "1 unnamed placeholders, the source has 2"),
-    ],
-)
-def test_python_format_problems(source, translation, expected):
-    assert expected in translation_problem((source,), translation, PY)
-
-
-def test_unflagged_percent_is_plain_text():
-    assert translation_problem(("100% free",), "100 % kostenlos") is None
-
-
-def test_plural_form_may_omit_placeholders():
-    """Arabic writes "one file" / "two files" without the count."""
-    sources = ("%(count)d file", "%(count)d files")
-    assert translation_problem(sources, "ملف واحد", PY, plural=True) is None
-    assert "not in the source" in translation_problem(
-        sources, "%(n)d ملف", PY, plural=True
+def _validator_accepts(lang, formats, msgid, msgid_plural, msgstr):
+    if msgid_plural is None:
+        return translation_problem(msgid, msgstr, formats) is None
+    nplurals = int(LANGS[lang].split("nplurals=")[1].split(";")[0])
+    return all(
+        translation_problem(msgid_plural, form, formats, may_omit=nplurals > 1) is None
+        for form in msgstr
     )
-    assert "2 unnamed" in translation_problem(
-        ("%d file", "%d files"), "%d %d", PY, plural=True
+
+
+def _msgfmt_accepts(tmp_path, lang, formats, msgid, msgid_plural, msgstr):
+    po = polib.POFile()
+    po.metadata = {
+        "Content-Type": "text/plain; charset=UTF-8",
+        "Plural-Forms": LANGS[lang],
+    }
+    entry = polib.POEntry(msgid=msgid, flags=sorted(formats))
+    if msgid_plural is None:
+        entry.msgstr = msgstr
+    else:
+        entry.msgid_plural = msgid_plural
+        entry.msgstr_plural = dict(enumerate(msgstr))
+    po.append(entry)
+    path = tmp_path / "case.po"
+    po.save(str(path))
+    result = subprocess.run(
+        ["msgfmt", "--check-format", "-o", os.devnull, str(path)],
+        capture_output=True,
     )
-    assert "lone" in translation_problem(sources, "100 % ملف", PY, plural=True)
+    return result.returncode == 0
 
 
 @pytest.mark.parametrize(
-    ("source", "translation", "expected"),
-    [
-        ("Hi {name}", "Hallo {name}", None),
-        ("{0} of {1}", "{1} van {0}", None),
-        ("Use {{braces}} and {x!r:>5}", "Gebruik {{accolades}} en {x!r:>5}", None),
-        ("Hi {name}", "Hallo", "missing fields: {name}"),
-        ("Hi {name}", "Hallo {naam}", "fields not in the source: {naam}"),
-    ],
+    ("lang", "formats", "msgid", "msgid_plural", "msgstr", "valid"),
+    [case[1:] for case in CASES],
+    ids=[case[0] for case in CASES],
 )
-def test_brace_format(source, translation, expected):
-    problem = translation_problem((source,), translation, BRACE)
-    assert problem == expected if expected is None else expected in problem
+def test_translation_problem(lang, formats, msgid, msgid_plural, msgstr, valid):
+    assert _validator_accepts(lang, formats, msgid, msgid_plural, msgstr) == valid
 
 
-def test_brace_format_plural_may_omit_fields():
-    sources = ("{count} file", "{count} files")
-    assert translation_problem(sources, "ملف واحد", BRACE, plural=True) is None
+@pytest.mark.skipif(shutil.which("msgfmt") is None, reason="gettext not installed")
+@pytest.mark.parametrize(
+    ("lang", "formats", "msgid", "msgid_plural", "msgstr", "valid"),
+    [case[1:] for case in CASES],
+    ids=[case[0] for case in CASES],
+)
+def test_cases_match_msgfmt(
+    tmp_path, lang, formats, msgid, msgid_plural, msgstr, valid
+):
+    """Every case above is what msgfmt --check-format itself decides."""
+    assert _msgfmt_accepts(tmp_path, lang, formats, msgid, msgid_plural, msgstr) == (
+        valid
+    )
+
+
+def test_problem_descriptions():
+    assert "lone '%'" in translation_problem("100%% free", "100 % kostenlos", PY)
+    # "% f" is itself a conversion (space flag + f), as msgfmt sees it too
+    assert "1 unnamed placeholders" in translation_problem(
+        "100%% free", "100 % frei", PY
+    )
+    assert "missing placeholders: name" in translation_problem(
+        "Hi %(name)s", "Hallo", PY
+    )
+    assert "not in the source: naam" in translation_problem(
+        "Hi %(name)s", "Hallo %(naam)s", PY
+    )
+    assert "different type: n" in translation_problem("%(n)d", "%(n)s", PY)
+    assert "1 unnamed placeholders, the source has 2" in translation_problem(
+        "%s %d", "%s", PY
+    )
+    assert "different type or order" in translation_problem("%d %s", "%s %d", PY)
+    assert "missing fields: {name}" in translation_problem("Hi {name}", "Hi", BRACE)
+    assert "fields not in the source: {x}" in translation_problem(
+        "Hi {name}", "Hi {name} {x}", BRACE
+    )
+    assert "invalid {field}" in translation_problem("Hi {name}", "Hi {name", BRACE)
+
+
+def test_invalid_source_is_not_compared():
+    """A source that isn't a valid format string itself can't be compared."""
+    assert translation_problem("Save 50%", "50%% sparen", PY) is None
+    assert translation_problem("Hi {name", "Hallo {name}", BRACE) is None
 
 
 def test_index_marker_and_empty():
     # Seen with DeepSeek V4 Pro: all 125 Japanese entries came back as "#N"
-    assert "index marker ('#16')" in translation_problem(("Read more",), "#16")
-    assert translation_problem(("#1",), "#1") is None
-    assert translation_problem(("Hello",), "  ") == "empty"
-    assert translation_problem(("Hello",), 3) == "not a string"
+    assert "index marker ('#16')" in translation_problem("Read more", "#16")
+    assert translation_problem("#1", "#1") is None
+    assert translation_problem("Hello", "  ") == "empty"
+    assert translation_problem("Hello", 3) == "not a string"
 
 
-def test_po_unit_problem_for_plural_text_and_two_strings():
+def test_po_unit_problem():
     # Looked up at call time: test_translate_command reloads the module,
     # which replaces these classes
-    POUnit, PluralText = translate_module.POUnit, translate_module.PluralText
-    unit = POUnit(None, "%(n)d file", "%(n)d files", formats=PY, nplurals=3)
-    plural = PluralText("%(n)d file", "%(n)d files", ("1", "2", "5"))
-    assert unit.problem(plural, ["%(n)d plik", "%(n)d pliki", "%(n)d plików"]) is None
-    assert "lone" in unit.problem(plural, ["%(n)d plik", "100 %", "x"])
-    assert unit.problem(plural, "not a list") == "not a list of plural forms"
-    # Two-string fallback: each string is checked as a plural form
-    assert unit.problem("%(n)d file", "plik") is None
+    POUnit = translate_module.POUnit
+    plain = POUnit(None, "Hello %(name)s", formats=PY)
+    assert plain.problem(["Hallo %(name)s"]) is None
+    assert "missing placeholders" in plain.problem(["Hallo"])
+
+    plural = POUnit(
+        None,
+        "%(n)d file",
+        "%(n)d files",
+        formats=PY,
+        nplurals=3,
+        plural_forms=("1", "2, 3, 4", "0, 5, 6"),
+    )
+    assert plural.problem([["plik", "%(n)d pliki", "%(n)d plików"]]) is None
+    assert plural.problem(["not a list"]) == "not a list of plural forms"
+    assert "(plural form 1)" in plural.problem([["plik", "100 %", "x"]])
+
+    # The singular goes to plain entries of the same message: strict there
+    plural.has_plain = True
+    assert "(singular, for a non-plural entry)" in plural.problem(
+        [["plik", "%(n)d pliki", "%(n)d plików"]]
+    )
+    assert plural.problem([["%(n)d plik", "%(n)d pliki", "%(n)d plików"]]) is None
+
+
+def test_two_string_mode_single_form_language_gets_the_plural():
+    """ja/zh have one form for every count; it must keep the placeholder."""
+    unit = translate_module.POUnit(
+        None, "One file", "%(n)d files", formats=PY, nplurals=1
+    )
+    forms = unit.translation_from(["ファイル1つ", "%(n)d ファイル"])
+    assert list(forms) == ["%(n)d ファイル"]
+    assert forms.singular == "ファイル1つ"
+    assert unit.problem(["ファイル1つ", "%(n)d ファイル"]) is None
+
+
+def test_absorb_tracks_plain_duplicates():
+    POUnit = translate_module.POUnit
+    plain_first = POUnit(None, "Item")
+    plain_first.absorb(POUnit(None, "Item", "Items", formats=PY))
+    assert plain_first.has_plain and plain_first.formats == PY
+
+    plural_first = POUnit(None, "Item", "Items")
+    plural_first.absorb(POUnit(None, "Item"))
+    assert plural_first.has_plain
+
+    only_plural = POUnit(None, "Item", "Items")
+    only_plural.absorb(POUnit(None, "Item", "Items"))
+    assert not only_plural.has_plain
 
 
 # --- translate command ---

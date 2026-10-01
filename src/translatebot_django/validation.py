@@ -1,115 +1,155 @@
 """Checks that a provider's translation of a PO message is safe to write.
 
-They mirror what ``msgfmt --check-format`` (run by ``compilemessages``)
-rejects for ``python-format`` and ``python-brace-format`` entries, so a
-translation that would break compilation is caught before it is written,
-and add a check for degenerate output (index markers instead of text).
+They mirror what ``msgfmt --check-format`` (GNU gettext, run by
+``compilemessages``) rejects for ``python-format`` and
+``python-brace-format`` entries, so a translation that would break
+compilation is caught before it is written, and add a check for degenerate
+output (index markers instead of text). The rules were confirmed against
+gettext 1.0; see tests/test_validation.py.
 """
 
 import re
+import string
 
 PYTHON_FORMAT = "python-format"
 PYTHON_BRACE_FORMAT = "python-brace-format"
 FORMAT_FLAGS = frozenset({PYTHON_FORMAT, PYTHON_BRACE_FORMAT})
 
-# A printf-style conversion: %s, %(name)s, %-5.2f, %%, ...
+# A printf-style conversion gettext accepts in python-format strings:
+# %s, %(name)s, %-5.2f, %*d, %%, ... (%F and %a are not among them).
 _PERCENT_SPEC_RE = re.compile(
     r"%(?:\((?P<name>[^)]*)\))?[#0\- +]*(?:\*|\d+)?(?:\.(?:\*|\d+))?[hlL]?"
-    r"(?P<conv>[diouxXeEfFgGcrsa%])"
+    r"(?P<conv>[diouxXeEfgGcsr%])"
 )
 
-# A str.format() replacement field: {}, {0}, {name}, {name!r:>10}. Doubled
-# braces are literal and removed before matching.
-_BRACE_FIELD_RE = re.compile(r"\{([^{}!:]*)(?:![rsa])?(?::[^{}]*)?\}")
+# Conversions msgfmt treats as interchangeable
+_TYPE_CLASSES = {
+    **dict.fromkeys("diouxX", "integer"),
+    **dict.fromkeys("eEfgG", "float"),
+    **dict.fromkeys("sr", "string"),
+    "c": "character",
+}
 
 # What a model sometimes returns instead of a translation: "#1", "#2", ...
 _INDEX_MARKER_RE = re.compile(r"^\s*#\d+\s*$")
 
 
 def _percent_specs(text):
-    """Return (named, unnamed_count, has_stray_percent) for *text*."""
-    named = []
-    unnamed = 0
+    """Return ``(named, unnamed)`` conversions in *text*, or None if invalid.
+
+    *named* maps each name to its type class; *unnamed* lists the type
+    classes in order. A ``%`` that isn't part of a valid conversion (a
+    literal percent sign must be written ``%%``) makes the text invalid.
+    """
+    if "%" in _PERCENT_SPEC_RE.sub("", text):
+        return None
+    named = {}
+    unnamed = []
     for match in _PERCENT_SPEC_RE.finditer(text):
-        if match.group("conv") == "%":
+        conv = match.group("conv")
+        if conv == "%":
             continue
+        type_class = _TYPE_CLASSES[conv]
         if match.group("name") is not None:
-            named.append(match.group("name"))
+            named[match.group("name")] = type_class
         else:
-            unnamed += 1
-    stray = "%" in _PERCENT_SPEC_RE.sub("", text)
-    return named, unnamed, stray
+            unnamed.append(type_class)
+    return named, unnamed
 
 
 def _brace_fields(text):
-    """Return the replacement field names in *text* ("" for ``{}``)."""
-    return _BRACE_FIELD_RE.findall(text.replace("{{", "").replace("}}", ""))
+    """Return the set of field names in *text*, or None if it's invalid.
+
+    Auto-numbered ``{}`` fields are numbered by position, as str.format()
+    does, so dropping one of two ``{}`` is noticed.
+    """
+    fields = set()
+    position = 0
+    try:
+        for _, field, _, _ in string.Formatter().parse(text):
+            if field is None:
+                continue
+            name = re.split(r"[.\[]", field, maxsplit=1)[0]
+            if name == "":
+                name = str(position)
+                position += 1
+            fields.add(name)
+    except ValueError:
+        return None
+    return fields
 
 
-def _check_percent(sources, translation, plural):
-    named, unnamed, stray = _percent_specs(translation)
-    if stray:
+def _check_percent(source, translation, may_omit):
+    specs = _percent_specs(translation)
+    if specs is None:
         return "a lone '%' (a literal percent sign must be written as '%%')"
-    source_specs = [_percent_specs(s) for s in sources]
-    source_named = {n for names, _, _ in source_specs for n in names}
-    extra = sorted(set(named) - source_named)
+    named, unnamed = specs
+    source_specs = _percent_specs(source)
+    if source_specs is None:
+        # The source itself isn't a valid format string; nothing to compare
+        return None
+    source_named, source_unnamed = source_specs
+    extra = sorted(set(named) - set(source_named))
     if extra:
         return f"placeholders not in the source: {', '.join(extra)}"
-    source_unnamed = max(count for _, count, _ in source_specs)
-    if plural:
-        # A plural form may leave a placeholder out ("one file"), but can't
-        # need more arguments than the source supplies
-        if unnamed > source_unnamed:
-            return f"{unnamed} unnamed placeholders, the source has {source_unnamed}"
-        return None
-    missing = sorted(source_named - set(named))
-    if missing:
+    missing = sorted(set(source_named) - set(named))
+    if missing and not may_omit:
         return f"missing placeholders: {', '.join(missing)}"
+    changed = sorted(n for n in named if named[n] != source_named[n])
+    if changed:
+        return f"placeholders with a different type: {', '.join(changed)}"
+    if len(unnamed) != len(source_unnamed):
+        return (
+            f"{len(unnamed)} unnamed placeholders, the source has {len(source_unnamed)}"
+        )
     if unnamed != source_unnamed:
-        return f"{unnamed} unnamed placeholders, the source has {source_unnamed}"
+        return "unnamed placeholders with a different type or order"
     return None
 
 
-def _check_brace(sources, translation, plural):
-    fields = set(_brace_fields(translation))
-    source_fields = {f for s in sources for f in _brace_fields(s)}
+def _check_brace(source, translation, may_omit):
+    fields = _brace_fields(translation)
+    if fields is None:
+        return "an invalid {field} (e.g. an unmatched brace)"
+    source_fields = _brace_fields(source)
+    if source_fields is None:
+        return None
     extra = sorted(fields - source_fields)
     if extra:
         return f"fields not in the source: {', '.join('{' + f + '}' for f in extra)}"
-    if not plural:
-        missing = sorted(source_fields - fields)
-        if missing:
-            return f"missing fields: {', '.join('{' + f + '}' for f in missing)}"
+    missing = sorted(source_fields - fields)
+    if missing and not may_omit:
+        return f"missing fields: {', '.join('{' + f + '}' for f in missing)}"
     return None
 
 
-def translation_problem(sources, translation, formats=frozenset(), plural=False):
+def translation_problem(source, translation, formats=frozenset(), may_omit=False):
     """Describe why *translation* can't be written, or return None if it can.
 
     Args:
-        sources: The source string(s) the translation was made from: the
-            msgid, or for a plural form both the msgid and msgid_plural.
-        translation: One translated string (one plural form).
+        source: The string msgfmt compares the translation with: the msgid,
+            or for a plural form the msgid_plural.
+        translation: One translated string (a msgstr, or one plural form).
         formats: The entry's format flags (``python-format``,
             ``python-brace-format``); placeholders are only checked when
             flagged, since an unflagged ``%`` is plain text.
-        plural: Whether *translation* is a plural form, which may leave
-            placeholders out.
+        may_omit: Whether named placeholders and fields may be left out.
+            msgfmt allows this in the plural forms of a language with more
+            than one form ("one file"); positional ``%s``/``%d`` must
+            always all be there.
     """
     if not isinstance(translation, str):
         return "not a string"
-    if _INDEX_MARKER_RE.match(translation) and not any(
-        _INDEX_MARKER_RE.match(s) for s in sources
-    ):
+    if _INDEX_MARKER_RE.match(translation) and not _INDEX_MARKER_RE.match(source):
         return f"an index marker ({translation.strip()!r}) instead of a translation"
-    if any(s.strip() for s in sources) and not translation.strip():
+    if source.strip() and not translation.strip():
         return "empty"
     if PYTHON_FORMAT in formats:
-        problem = _check_percent(sources, translation, plural)
+        problem = _check_percent(source, translation, may_omit)
         if problem:
             return problem
     if PYTHON_BRACE_FORMAT in formats:
-        problem = _check_brace(sources, translation, plural)
+        problem = _check_brace(source, translation, may_omit)
         if problem:
             return problem
     return None
