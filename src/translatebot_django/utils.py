@@ -16,7 +16,7 @@ DEFAULT_TIMEOUT_SECONDS = 300
 
 def get_model():
     """Get default model from the Django settings or use fallback."""
-    model = getattr(settings, "TRANSLATEBOT_MODEL", "gpt-5.4-nano")
+    model = getattr(settings, "TRANSLATEBOT_MODEL", "gpt-6-luna")
     return model
 
 

@@ -40,8 +40,10 @@ dependencies = [
   # litellm >= 1.98.0 fails to import on Python 3.10 (uses typing.NotRequired,
   # which is 3.11+): https://github.com/BerriAI/litellm/issues/38076
   # Drop the < 1.98 cap once that issue is fixed upstream.
+  # litellm < 1.100.3 drops reasoning_effort for the default gpt-6-luna, so it
+  # reasons at the provider's default effort; Python 3.10 can't avoid that yet.
   "litellm>=1.80.0,<1.98; python_version < '3.11'",
-  "litellm>=1.80.0,<2; python_version >= '3.11'",
+  "litellm>=1.100.3,<2; python_version >= '3.11'",
 ]
 
 [project.urls]

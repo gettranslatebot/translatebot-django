@@ -96,7 +96,7 @@ LANGUAGES = [("en", "English"), ("nl", "Dutch"), ("de", "German")]
 
 TRANSLATEBOT_API_KEY = os.getenv("TRANSLATEBOT_API_KEY")
 # The default; any LiteLLM model works, e.g. "claude-sonnet-5-5"
-TRANSLATEBOT_MODEL = "gpt-5.4-nano"
+TRANSLATEBOT_MODEL = "gpt-6-luna"
 ```
 
 The API key must belong to the provider of `TRANSLATEBOT_MODEL`. To use DeepL instead, set `TRANSLATEBOT_PROVIDER = "deepl"`, put your DeepL key in `TRANSLATEBOT_API_KEY` and leave out `TRANSLATEBOT_MODEL`.
