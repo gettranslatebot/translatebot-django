@@ -434,9 +434,9 @@ def test_command_plural_split_across_batches(temp_locale_dir, settings, mocker):
     saved_keys = []
     real_save = Command._save_po_translations
 
-    def record_save(po_paths, translations, overwrite=False):
+    def record_save(po_paths, translations, overwrite=False, drafts=None):
         saved_keys.append(set(translations))
-        real_save(po_paths, translations, overwrite=overwrite)
+        return real_save(po_paths, translations, overwrite=overwrite, drafts=drafts)
 
     mocker.patch.object(Command, "_save_po_translations", side_effect=record_save)
 

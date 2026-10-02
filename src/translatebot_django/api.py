@@ -15,6 +15,9 @@ class TranslateResult:
         strings_found: Number of translatable strings found in PO files.
         strings_translated: Number of PO strings that were translated
             (or would be translated in dry-run mode).
+        strings_rejected: Number of PO strings whose translation failed
+            validation twice (e.g. a dropped placeholder). They're written
+            marked fuzzy when there's a usable draft, or not at all.
         po_files: Number of PO files processed.
         model_fields_found: Number of translatable model fields found.
         model_fields_translated: Number of model fields that were translated
@@ -25,6 +28,7 @@ class TranslateResult:
 
     strings_found: int = 0
     strings_translated: int = 0
+    strings_rejected: int = 0
     po_files: int = 0
     model_fields_found: int = 0
     model_fields_translated: int = 0
@@ -152,6 +156,7 @@ def translate(
     return TranslateResult(
         strings_found=stats.get("strings_found", 0),
         strings_translated=stats.get("strings_translated", 0),
+        strings_rejected=stats.get("strings_rejected", 0),
         po_files=stats.get("po_files", 0),
         model_fields_found=stats.get("model_fields_found", 0),
         model_fields_translated=stats.get("model_fields_translated", 0),

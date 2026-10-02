@@ -80,6 +80,7 @@ from translatebot_django.utils import (
     get_translation_context,
     is_modeltranslation_available,
 )
+from translatebot_django.validation import FORMAT_FLAGS, translation_problem
 
 logger = logging.getLogger(__name__)
 
@@ -664,6 +665,15 @@ class POUnit:
             file's ``Plural-Forms`` header (see
             :func:`plural_forms_from_header`), or None if unknown.
         nplurals: Number of plural forms to write.
+        formats: The entry's format flags (``python-format``,
+            ``python-brace-format``), which decide how placeholders in the
+            translation are checked.
+        has_plain: For a pluralized message, whether some PO file also has
+            it as a plain entry, which gets the singular form.
+        plain_formats: The format flags of those plain entries, which decide
+            how the singular is checked for them.
+        single_form: Whether some PO file of the message has a single plural
+            form, where msgfmt checks the only form strictly.
     """
 
     msgctxt: str | None
@@ -672,6 +682,10 @@ class POUnit:
     comment: str | None = None
     plural_forms: tuple[str, ...] | None = None
     nplurals: int = 2
+    formats: frozenset = frozenset()
+    has_plain: bool = False
+    plain_formats: frozenset = frozenset()
+    single_form: bool = False
 
     @property
     def key(self):
@@ -687,16 +701,59 @@ class POUnit:
         if other.comment:
             self.comment = other.comment
         if other.msgid_plural is None:
+            if self.msgid_plural is None:
+                self.formats |= other.formats
+            else:
+                self.has_plain = True
+                self.plain_formats |= other.formats
             return
         if self.msgid_plural is None:
+            self.has_plain = True
+            self.plain_formats = self.formats
+            self.formats = other.formats
             self.msgid_plural = other.msgid_plural
             self.plural_forms = other.plural_forms
             self.nplurals = other.nplurals
-        elif other.plural_forms and len(other.plural_forms) > len(
+            self.single_form = other.single_form
+            return
+        self.formats |= other.formats
+        self.single_form |= other.single_form
+        if other.plural_forms and len(other.plural_forms) > len(
             self.plural_forms or ()
         ):
             self.plural_forms = other.plural_forms
             self.nplurals = other.nplurals
+
+    def problem(self, results):
+        """Why the provider's *results* for :meth:`provider_texts` can't be
+        written, or None if they can.
+
+        Checks what will be written, the way ``msgfmt --check-format`` does:
+        a msgstr against the msgid, and every plural form against the
+        msgid_plural, where named placeholders may be left out unless the
+        language has a single form.
+        """
+        if self.msgid_plural is None:
+            return translation_problem(self.msgid, results[0], self.formats)
+        if len(results) == 1 and not isinstance(results[0], list):
+            return "not a list of plural forms"
+        forms = self.translation_from(results)
+        for index, form in enumerate(forms):
+            problem = translation_problem(
+                self.msgid_plural,
+                form,
+                self.formats,
+                may_omit=self.nplurals > 1 and not self.single_form,
+            )
+            if problem:
+                return f"{problem} (plural form {index})"
+        if self.has_plain:
+            problem = translation_problem(
+                self.msgid, forms.singular, self.plain_formats
+            )
+            if problem:
+                return f"{problem} (singular, for a non-plural entry)"
+        return None
 
     def provider_texts(self, plural_aware):
         """The texts to send to a provider for this message."""
@@ -720,9 +777,30 @@ class POUnit:
         # Singular and plural were translated as two plain strings; reuse
         # the plural translation for every form past the first.
         singular, plural = results
+        if self.nplurals == 1:
+            # The only form covers every count (ja, zh, ...), so it needs
+            # the plural's placeholders
+            return PluralForms([plural], singular=singular)
         return PluralForms(
             [singular] + [plural] * (self.nplurals - 1), singular=singular
         )
+
+    def draft_from(self, results):
+        """The provider's rejected *results* as a draft to write marked
+        fuzzy, or None if there is nothing worth reviewing (no text, an
+        empty translation or index markers)."""
+        if self.msgid_plural is None:
+            draft = results[0]
+            checks = [(self.msgid, draft)]
+        else:
+            if len(results) == 1 and not isinstance(results[0], list):
+                return None
+            draft = self.translation_from(results)
+            checks = [(self.msgid_plural, form) for form in draft]
+            checks.append((self.msgid, draft.singular))
+        if any(translation_problem(source, text) for source, text in checks):
+            return None
+        return draft
 
     def _singular_index(self):
         """Index of the plural form used for a count of 1 (not always 0:
@@ -753,6 +831,20 @@ def _entry_comment(entry):
     if entry.comment and entry.comment.strip():
         parts.append(entry.comment.strip())
     return "\n".join(parts) or None
+
+
+def _set_translation(entry, value):
+    """Write a translated string, or a list of plural forms, to *entry*."""
+    forms = value if isinstance(value, list) else [value]
+    if entry.msgid_plural:
+        count = len(entry.msgstr_plural) or len(forms)
+        # Repeat the last form if the file declares more plural forms than
+        # were translated.
+        entry.msgstr_plural = {i: forms[min(i, len(forms) - 1)] for i in range(count)}
+    elif isinstance(value, PluralForms):
+        entry.msgstr = value.singular
+    else:
+        entry.msgstr = forms[0]
 
 
 def _is_translated(entry):
@@ -790,15 +882,16 @@ def gather_entries(po_path, include_translated=False):
         key = (entry.msgctxt, entry.msgid)
         if key in units:
             continue
+        nplurals = len(plural_forms) if plural_forms else len(entry.msgstr_plural) or 2
         units[key] = POUnit(
             msgctxt=entry.msgctxt,
             msgid=entry.msgid,
             msgid_plural=entry.msgid_plural or None,
             comment=_entry_comment(entry),
             plural_forms=plural_forms,
-            nplurals=(
-                len(plural_forms) if plural_forms else len(entry.msgstr_plural) or 2
-            ),
+            nplurals=nplurals,
+            formats=frozenset(entry.flags) & FORMAT_FLAGS,
+            single_form=bool(entry.msgid_plural) and nplurals == 1,
         )
 
     return list(units.values())
@@ -958,6 +1051,7 @@ class Command(BaseCommand):
         total_po_files = 0
         total_model_fields_found = 0
         total_model_fields_translated = 0
+        rejected = []  # see _translate_po_files
 
         # Process each target language
         for lang in target_langs:
@@ -979,6 +1073,7 @@ class Command(BaseCommand):
                 total_strings_found += po_stats["strings_found"]
                 total_strings_translated += po_stats["strings_translated"]
                 total_po_files += po_stats["po_files"]
+                rejected.extend(po_stats["rejected"])
 
             # Handle model field translation (NEW)
             if translate_models:
@@ -1003,18 +1098,44 @@ class Command(BaseCommand):
             )
             self.stdout.write("=" * 60)
 
+        if rejected:
+            self._report_rejected(rejected)
+
         # Read by api.translate() to build TranslateResult — keep in sync.
         self._translate_stats = {
             "strings_found": total_strings_found,
             "strings_translated": total_strings_translated,
+            "strings_rejected": len(rejected),
             "po_files": total_po_files,
             "model_fields_found": total_model_fields_found,
             "model_fields_translated": total_model_fields_translated,
             "target_langs": target_langs,
         }
 
+    def _report_rejected(self, rejected):
+        """List the translations that failed validation, at the end of the
+        run where they can't scroll by unnoticed."""
+        self.stdout.write(
+            self.style.WARNING(
+                f"\n⚠️  {len(rejected)} translation(s) failed validation, also on retry:"
+            )
+        )
+        last_path = None
+        for po_path, msgid, problem, drafted in rejected:
+            if po_path != last_path:
+                self.stdout.write(f"  {po_path}")
+                last_path = po_path
+            action = "marked fuzzy" if drafted else "not written"
+            self.stdout.write(f"    {msgid[:50]!r} ({action}): {problem}")
+        self.stdout.write(
+            "Fuzzy entries are skipped by compilemessages (unless run with "
+            "--use-fuzzy) and translated again on the next run; review them in "
+            "your PO editor or fix the placeholders by hand and remove the fuzzy "
+            "flag. Entries not written keep their existing translation, if any."
+        )
+
     @staticmethod
-    def _save_po_translations(po_paths, translations, overwrite=False):
+    def _save_po_translations(po_paths, translations, overwrite=False, drafts=None):
         """Write current translations to PO files on disk.
 
         Called after each successful batch so that translations are persisted
@@ -1025,38 +1146,47 @@ class Command(BaseCommand):
             translations: Dict mapping ``(msgctxt, msgid)`` to a translated
                 string, or for pluralized messages a list of plural forms.
             overwrite: Also replace existing non-fuzzy translations.
+            drafts: Like *translations*, for translations that failed
+                validation. They're written marked fuzzy, which
+                ``compilemessages`` skips (unless run with ``--use-fuzzy``)
+                and the next run translates again, and only to entries
+                without any translation: a draft never replaces one, not even
+                with *overwrite*.
+
+        Returns:
+            A set of ``(po_path, key)`` for the drafts written.
         """
+        drafts = drafts or {}
+        written_drafts = set()
         for po_path in po_paths:
             po = polib.pofile(str(po_path), wrapwidth=79)
             changed = False
 
             for entry in po:
                 key = (entry.msgctxt, entry.msgid)
+                if key in drafts:
+                    # Not even a partly translated plural entry
+                    if entry.fuzzy or entry.msgstr or any(entry.msgstr_plural.values()):
+                        continue
+                    _set_translation(entry, drafts[key])
+                    entry.flags.append("fuzzy")
+                    written_drafts.add((po_path, key))
+                    changed = True
+                    continue
                 if key not in translations:
                     continue
                 # Never replace existing non-fuzzy translations unless
                 # the user explicitly requested --overwrite.
                 if not overwrite and not entry.fuzzy and _is_translated(entry):
                     continue
-                value = translations[key]
-                forms = value if isinstance(value, list) else [value]
-                if entry.msgid_plural:
-                    count = len(entry.msgstr_plural) or len(forms)
-                    # Repeat the last form if the file declares more plural
-                    # forms than were translated.
-                    entry.msgstr_plural = {
-                        i: forms[min(i, len(forms) - 1)] for i in range(count)
-                    }
-                elif isinstance(value, PluralForms):
-                    entry.msgstr = value.singular
-                else:
-                    entry.msgstr = forms[0]
+                _set_translation(entry, translations[key])
                 if entry.fuzzy:
                     entry.flags.remove("fuzzy")
                 changed = True
 
             if changed:
                 po.save(str(po_path))
+        return written_drafts
 
     def _translate_po_files(
         self,
@@ -1137,6 +1267,7 @@ class Command(BaseCommand):
                 "strings_found": 0,
                 "strings_translated": 0,
                 "po_files": len(po_paths),
+                "rejected": [],
             }
 
         self.stdout.write(f"ℹ️  Found {total_msgids} untranslated entries")
@@ -1144,6 +1275,10 @@ class Command(BaseCommand):
         # po_path -> keys of the entries translated (or, in a dry run, to be
         # translated) in that file
         done = {po_path: set() for po_path in po_paths}
+        # (po_path, msgid, problem, written as a fuzzy draft), per file like
+        # the other counts
+        rejected = []
+        written_drafts = set()  # (po_path, key) of the drafts marked fuzzy
         if dry_run:
             self.stdout.write("🔍 Dry run mode: skipping translation")
             done.update(pending)
@@ -1153,10 +1288,12 @@ class Command(BaseCommand):
                 # Per group, so one group's translation (made with its own
                 # TRANSLATING.md) is never written into another group's files
                 translations = {}
-                self._translate_po_units(
+                group_rejected = {}
+                written_drafts |= self._translate_po_units(
                     units,
                     group_po_paths,
                     translations,
+                    group_rejected,
                     target_lang=target_lang,
                     provider=provider,
                     context=effective_context,
@@ -1164,6 +1301,11 @@ class Command(BaseCommand):
                 )
                 for po_path in group_po_paths:
                     done[po_path] = pending[po_path] & translations.keys()
+                    rejected.extend(
+                        (po_path, msgid, problem, (po_path, key) in written_drafts)
+                        for key, (msgid, problem) in group_rejected.items()
+                        if key in pending[po_path]
+                    )
 
         # Report what was translated and save PO files for dry-run
         total_changed = 0
@@ -1173,12 +1315,17 @@ class Command(BaseCommand):
             changed = 0
 
             for entry in po:
-                if (entry.msgctxt, entry.msgid) in done[po_path]:
+                key = (entry.msgctxt, entry.msgid)
+                if key in done[po_path]:
                     if dry_run:
                         self.stdout.write(f"✓ Would translate '{entry.msgid[:50]}'")
                     else:
                         self.stdout.write(f"✓ Translated '{entry.msgid[:50]}'")
                     changed += 1
+                elif (po_path, key) in written_drafts:
+                    self.stdout.write(
+                        self.style.WARNING(f"⚠️  Marked fuzzy '{entry.msgid[:50]}'")
+                    )
 
             if dry_run:
                 self.stdout.write(
@@ -1213,14 +1360,31 @@ class Command(BaseCommand):
             "strings_found": total_msgids,
             "strings_translated": total_changed,
             "po_files": len(po_paths),
+            "rejected": rejected,
         }
 
     def _translate_po_units(
-        self, units, po_paths, translations, target_lang, provider, context, overwrite
+        self,
+        units,
+        po_paths,
+        translations,
+        rejected,
+        target_lang,
+        provider,
+        context,
+        overwrite,
     ):
         """Translate *units* in batches, saving *po_paths* after each batch.
 
         Adds each translation to *translations*, keyed by ``(msgctxt, msgid)``.
+        Messages whose translation fails :meth:`POUnit.problem` (e.g. a
+        dropped placeholder) are retried once; those that still fail are
+        added to *rejected* as ``(msgid, problem)`` and written as fuzzy
+        drafts (see :meth:`_save_po_translations`), so they never break
+        ``compilemessages``.
+
+        Returns:
+            A set of ``(po_path, key)`` for the drafts written.
         """
         # Flatten to provider texts, remembering which slice of them
         # belongs to which message (a message may span two texts).
@@ -1234,39 +1398,122 @@ class Command(BaseCommand):
                 text_comments.append(unit.comment)
             spans.append((start, len(texts)))
 
+        def request(indices):
+            """Translate ``texts[i]`` for *indices*; returns ``{i: result}``."""
+            batch_comments = [text_comments[i] for i in indices]
+            translated = provider.translate(
+                texts=[texts[i] for i in indices],
+                target_lang=target_lang,
+                context=context,
+                comments=batch_comments if any(batch_comments) else None,
+            )
+            if len(translated) != len(indices):
+                raise TranslationValidationError(
+                    f"{provider.name} returned {len(translated)} "
+                    f"translations, expected {len(indices)}."
+                )
+            return dict(zip(indices, translated, strict=True))
+
         groups = provider.batch(texts, target_lang, comments=text_comments)
+        drafts = {}
+        written_drafts = set()
 
         with handle_api_errors():
-            results = []
+            results = {}
             done = 0
             for batch_num, group in enumerate(groups, 1):
-                start = len(results)
-                batch_comments = text_comments[start : start + len(group)]
-                translated = provider.translate(
-                    texts=group,
-                    target_lang=target_lang,
-                    context=context,
-                    comments=batch_comments if any(batch_comments) else None,
-                )
-                if len(translated) != len(group):
-                    raise TranslationValidationError(
-                        f"{provider.name} returned {len(translated)} "
-                        f"translations, expected {len(group)}."
+                indices = range(len(results), len(results) + len(group))
+                try:
+                    results.update(request(indices))
+                except TranslationValidationError as e:
+                    logger.warning(
+                        "Invalid response from %s (%s), retrying...", provider.name, e
                     )
-                results.extend(translated)
+                    results.update(request(indices))
 
-                # Record every message whose texts are now all translated
+                # Messages whose texts are now all translated
+                completed = []
                 while done < len(units) and spans[done][1] <= len(results):
-                    unit_start, unit_end = spans[done]
-                    translations[units[done].key] = units[done].translation_from(
-                        results[unit_start:unit_end]
-                    )
+                    completed.append(done)
                     done += 1
-
-                # Save PO files after each batch so translations
-                # aren't lost if a later batch fails
-                self._save_po_translations(po_paths, translations, overwrite=overwrite)
+                try:
+                    self._check_and_record(
+                        [(units[u], range(*spans[u])) for u in completed],
+                        results,
+                        request,
+                        translations,
+                        drafts,
+                        rejected,
+                        provider,
+                    )
+                finally:
+                    # Save PO files after each batch so translations aren't
+                    # lost if a later batch (or this batch's retry) fails
+                    written_drafts |= self._save_po_translations(
+                        po_paths, translations, overwrite=overwrite, drafts=drafts
+                    )
                 self.stdout.write(f"  💾 Saved batch {batch_num}/{len(groups)}")
+        return written_drafts
+
+    def _check_and_record(
+        self, completed, results, request, translations, drafts, rejected, provider
+    ):
+        """Validate completed messages and add the valid ones to *translations*.
+
+        Messages with a problem are retried once together (one request with
+        just their texts); those still failing are reported, added to
+        *rejected* and, if :meth:`POUnit.draft_from` finds something worth
+        reviewing, to *drafts*.
+        """
+
+        def problems(candidates):
+            found = {}
+            for unit, span in candidates:
+                problem = unit.problem([results[i] for i in span])
+                if problem:
+                    found[unit.key] = problem
+            return found
+
+        def record(candidates):
+            for unit, span in candidates:
+                if unit.key not in failing:
+                    translations[unit.key] = unit.translation_from(
+                        [results[i] for i in span]
+                    )
+
+        failing = problems(completed)
+        # Record the valid ones first, so a failing retry request can't
+        # lose them
+        record(completed)
+        if failing:
+            logger.warning(
+                "%d translation(s) from %s failed validation (e.g. %s), retrying...",
+                len(failing),
+                provider.name,
+                next(iter(failing.values())),
+            )
+            retry = [(u, span) for u, span in completed if u.key in failing]
+            try:
+                results.update(request([i for _, span in retry for i in span]))
+                failing = problems(retry)
+            except TranslationValidationError as e:
+                # Keep the first response's problems: that's the draft
+                # written for them
+                logger.warning("Invalid retry response from %s (%s)", provider.name, e)
+            record(retry)
+
+        for unit, span in completed:
+            if unit.key in failing:
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"⚠️  Rejected {unit.msgid[:50]!r}: the translation had "
+                        f"{failing[unit.key]}, also on retry."
+                    )
+                )
+                rejected[unit.key] = (unit.msgid, failing[unit.key])
+                draft = unit.draft_from([results[i] for i in span])
+                if draft is not None:
+                    drafts[unit.key] = draft
 
     def _translate_model_fields(
         self,

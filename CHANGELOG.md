@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- PO translations are validated before they are written, using the rules `msgfmt --check-format` (run by `compilemessages`) applies to `python-format` and `python-brace-format` entries: named placeholders and `{fields}` must match the source and keep their type (`%(n)d` can't become `%(n)s`), positional `%s`/`%d` must match in number and order, and a literal percent sign must stay `%%`. A `{field}`'s format spec must stay as in the source (`{a:.2f}` can't become `{a:,.2f}` or `{a}`), which gettext 0.21 (Debian/Ubuntu) requires. Plural forms are checked against `msgid_plural` and may leave named placeholders out ("one file"), except in languages with a single form (ja, zh, …). Translations that are index markers (`#1`, `#2`, …) or empty are rejected too.
+- Rejected translations are retried once, on their own. If they fail again, they never break `compilemessages`: an untranslated entry gets the translation as a draft marked `#, fuzzy`, which `compilemessages` skips (unless run with `--use-fuzzy`), PO editors flag for review, and the next run translates again. A draft never replaces any existing translation, not even with `--overwrite`, and empty translations or index markers aren't written. The run ends with a list of every rejected translation, per PO file, and `translate()` reports their number in `TranslateResult.strings_rejected`.
+- A response that fails validation as a whole (wrong number of translations, invalid JSON) is retried once before the run stops.
+
+### Fixed
+
+- Plural messages in single-form languages (ja, zh, …) get the plural translation in `msgstr[0]` when the singular and plural are translated as two strings (always with DeepL; with LLM providers when the PO file has no usable `Plural-Forms` header). It used to get the singular, which lacked the count placeholder and broke `compilemessages`.
+
 ## [1.4.1] - 2026-10-01
 
 ### Fixed

@@ -109,6 +109,11 @@ jobs:
         raise SystemExit(0 if got == want else f"expected Django {want}.x, got {got}")
         '
 
+    # tests/test_validation.py checks the translation validator against
+    # msgfmt --check-format itself; without gettext those tests are skipped.
+    - name: Install gettext
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gettext
+
     - name: Run tests
       env:
         PYTHONPATH: .
