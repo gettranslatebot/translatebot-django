@@ -400,6 +400,8 @@ CASES = [
 GETTEXT_1_0_RULES = {  # validator matches 1.0; 0.21 accepts or rejects
     "brace auto dropped",
     "brace auto dropped (2 -> 1)",
+    "brace {.x} without a name",
+    "brace {[0]} without a name",
 }
 GETTEXT_0_21_RULES = {  # validator matches 0.21; 1.0 accepts these
     "brace format spec",
