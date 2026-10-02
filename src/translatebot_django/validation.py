@@ -107,7 +107,7 @@ def _percent_specs(text):
             type_class = "none"
         elif conv not in _TYPE_CLASSES:
             raise _Invalid(_LONE_PERCENT)
-        elif conv in "sr" and precision is not None and precision.strip("0") == "":
+        elif conv in "sr" and precision and precision.strip("0") == "":
             # "%.0s" prints nothing, so gettext accepts any argument type
             type_class = "any"
         else:
@@ -116,8 +116,12 @@ def _percent_specs(text):
             unnamed.extend(["integer"] * stars + [type_class])
         elif stars:
             raise _Invalid(f"a '*' width in the named placeholder %({name})")
-        elif named.setdefault(name, type_class) != type_class:
-            raise _Invalid(f"placeholder {name} used with two different types")
+        else:
+            # "any" (%.0s) merges with the other uses' type, as in gettext
+            known = named.get(name, "any")
+            if "any" not in (known, type_class) and known != type_class:
+                raise _Invalid(f"placeholder {name} used with two different types")
+            named[name] = type_class if known == "any" else known
     if named and unnamed:
         raise _Invalid("named and unnamed placeholders mixed")
     return named, unnamed
@@ -166,13 +170,18 @@ def _brace_fields(text):
         field, _, spec = text[i + 1 : end].partition(":")
         if "{" in spec:
             # One nested field as the whole spec ("{a:{w}}") is allowed
-            if not re.fullmatch(r"\{[^{}:!]*\}", spec) and "{{" not in spec:
+            if (
+                not re.fullmatch(r"\{(?:[A-Za-z_]\w*|[0-9]+)\}", spec)
+                and "{{" not in spec
+            ):
                 raise _Invalid(f"a nested {{{field}:{spec}}} gettext doesn't support")
         elif not _BRACE_SPEC_RE.fullmatch(spec):
             raise _Invalid(f"an invalid format spec in {{{field}:{spec}}}")
         if "!" in field:
             raise _Invalid(f"a {{{field}}} conversion, which gettext doesn't support")
         name = re.match(r"[^.\[]*", field).group()
+        if name == "" and field:
+            raise _Invalid(f"a {{{field}}} field without a name")
         if name == "":
             field = str(position)
             position += 1
@@ -215,7 +224,10 @@ def _check_percent(source, translation, may_omit):
         return (
             f"{len(unnamed)} unnamed placeholders, the source has {len(source_unnamed)}"
         )
-    if unnamed != source_unnamed:
+    if any(
+        a != b and not (may_omit and "any" in (a, b))
+        for a, b in zip(unnamed, source_unnamed, strict=True)
+    ):
         return "unnamed placeholders with a different type or order"
     return None
 
