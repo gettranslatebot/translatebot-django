@@ -65,7 +65,7 @@ def translate(
             with *models*.
         model: LLM model name to use for this call, overriding
             ``settings.TRANSLATEBOT_MODEL`` (e.g. ``"gpt-4o"`` or
-            ``"claude-3-5-sonnet-20241022"``). Has no effect when using the
+            ``"claude-sonnet-5-5"``). Has no effect when using the
             DeepL provider — passing it with DeepL raises a
             :exc:`~django.core.management.base.CommandError`.
         models: Controls model field translation via django-modeltranslation.
