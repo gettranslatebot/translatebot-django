@@ -226,7 +226,7 @@ CASES = [
     ("brace !r in translation", "en", BRACE, "{a}", None, "{a!r}", False),
     ("brace !r in source", "en", BRACE, "{a!r} {b}", None, "{a!r}", True),
     ("brace lone }", "en", BRACE, "{a}", None, "{a} }", True),
-    ("brace format spec", "en", BRACE, "{a:>10}", None, "{a:<5}", True),
+    ("brace format spec", "en", BRACE, "{a:>10}", None, "{a:<5}", False),
     ("star width added", "en", PY, "%d x", None, "%*d y", False),
     ("star width counts as argument", "en", PY, "%d %d x", None, "%*d y", True),
     ("star width in named", "en", PY, "%(n)d x", None, "%(n)*d y", False),
@@ -244,7 +244,7 @@ CASES = [
     ("length modifier", "en", PY, "%ld x", None, "%d y", True),
     ("unterminated name", "en", PY, "%(n)d", None, "%(n", False),
     ("brace nested spec", "en", BRACE, "{a:{w}}", None, "{a:{w}}", True),
-    ("brace nested spec dropped", "en", BRACE, "{a:{w}} {b}", None, "{a} {b}", True),
+    ("brace nested spec dropped", "en", BRACE, "{a:{w}} {b}", None, "{a} {b}", False),
     ("brace nested unterminated", "en", BRACE, "{a}", None, "{a:{w}", False),
     ("brace auto with attr", "en", BRACE, "{} {.x}", None, "{.x} {}", True),
     ("brace auto attr dropped", "en", BRACE, "{} {.x}", None, "{} {}", True),
@@ -263,35 +263,46 @@ CASES = [
     ("%*% takes an argument (dropped)", "en", PY, "%s %*%", None, "%s", False),
     ("%*% takes an argument (added)", "en", PY, "%s", None, "%s %*%", False),
     ("arabic-indic digit width", "en", PY, "%s", None, "%٣s", False),
-    ("brace spec precision changed", "en", BRACE, "{a:.2f}", None, "{a:.3f}", True),
-    ("brace spec dropped", "en", BRACE, "{a:.2f}", None, "{a}", True),
-    ("brace spec added", "en", BRACE, "{a}", None, "{a:>5}", True),
+    ("brace spec precision changed", "en", BRACE, "{a:.2f}", None, "{a:.3f}", False),
+    ("brace spec dropped", "en", BRACE, "{a:.2f}", None, "{a}", False),
+    ("brace spec added", "en", BRACE, "{a}", None, "{a:>5}", False),
     ("brace spec grouping ,", "en", BRACE, "{a:.2f}", None, "{a:,.2f}", False),
     ("brace spec grouping _", "en", BRACE, "{a}", None, "{a:_}", False),
     ("brace spec z", "en", BRACE, "{a}", None, "{a:z}", False),
     ("brace spec s type", "en", BRACE, "{a}", None, "{a:s}", False),
     ("brace spec %s", "en", BRACE, "{a}", None, "{a:%s}", False),
     ("brace spec x!r", "en", BRACE, "{a}", None, "{a:x!r}", False),
-    ("brace spec full", "en", BRACE, "{a}", None, "{a:=+08.2f}", True),
-    ("brace spec fill", "en", BRACE, "{a}", None, "{a:*^5}", True),
-    ("brace spec F", "en", BRACE, "{a}", None, "{a:F}", True),
+    ("brace spec full", "en", BRACE, "{a}", None, "{a:=+08.2f}", False),
+    ("brace spec fill", "en", BRACE, "{a}", None, "{a:*^5}", False),
+    ("brace spec F", "en", BRACE, "{a}", None, "{a:F}", False),
     ("brace spec double dot", "en", BRACE, "{a}", None, "{a:..2}", False),
     ("brace spec dot without digits", "en", BRACE, "{a}", None, "{a:5.f}", False),
     ("brace nested field with extra", "en", BRACE, "{a}", None, "{a:{w}x}", False),
     ("brace doubly nested", "en", BRACE, "{a}", None, "{a:{b:c}}", False),
-    ("brace nested whole spec", "en", BRACE, "{a}", None, "{a:{w}}", True),
+    ("brace nested whole spec", "en", BRACE, "{a}", None, "{a:{w}}", False),
     ("brace nested in source", "en", BRACE, "{a:>{w}}", None, "{a}", True),
 ]
 
 
-# Brace-format cases where older gettext (e.g. Ubuntu's 0.21) decides
-# differently from 1.0; the validator follows 1.0
-GETTEXT_1_0_RULES = {
+# Brace-format cases where gettext versions disagree. Older gettext (e.g.
+# Ubuntu's 0.21) is more lenient about dropped {} fields and stricter about
+# numbering and format specs; the validator takes the stricter rule of the
+# two, so a translation it accepts compiles with either.
+GETTEXT_1_0_RULES = {  # validator matches 1.0; 0.21 accepts or rejects
     "brace auto dropped",
     "brace auto dropped (2 -> 1)",
+    "brace numbered -> auto",
+}
+GETTEXT_0_21_RULES = {  # validator matches 0.21; 1.0 accepts these
     "brace format spec",
     "brace nested spec dropped",
-    "brace numbered -> auto",
+    "brace spec precision changed",
+    "brace spec dropped",
+    "brace spec added",
+    "brace spec F",
+    "brace spec fill",
+    "brace spec full",
+    "brace nested whole spec",
 }
 
 
@@ -354,6 +365,8 @@ def test_cases_match_msgfmt(
     """Every case above is what msgfmt --check-format itself decides."""
     if name in GETTEXT_1_0_RULES and _msgfmt_version() < (1, 0):
         pytest.skip("older msgfmt decides differently here; the validator follows 1.0")
+    if name in GETTEXT_0_21_RULES and _msgfmt_version() >= (1, 0):
+        pytest.skip("msgfmt 1.0 is more lenient here; the validator follows 0.21")
     assert _msgfmt_accepts(tmp_path, lang, formats, msgid, msgid_plural, msgstr) == (
         valid
     )
@@ -393,6 +406,9 @@ def test_problem_descriptions():
         "{a:.2f}", "{a:,.2f}", BRACE
     )
     assert "nested {a:{b:c}}" in translation_problem("{a}", "{a:{b:c}}", BRACE)
+    assert "changed format spec for {a}" in translation_problem(
+        "{a:.2f}", "{a:.3f}", BRACE
+    )
 
 
 def test_invalid_source_is_not_compared():

@@ -111,8 +111,9 @@ def _percent_specs(text):
 def _brace_fields(text):
     """Parse *text* as a python-brace-format string, the way msgfmt does.
 
-    Returns the set of replacement fields, each with its full
-    ``.attribute`` / ``[index]`` chain. Auto-numbered ``{}`` fields are
+    Returns a dict mapping each replacement field, with its full
+    ``.attribute`` / ``[index]`` chain, to the set of format specs it is
+    used with. Auto-numbered ``{}`` fields are
     numbered by position, as str.format() does, without their chain: msgfmt
     is inconsistent about those (it accepts ``{.x}`` -> ``{.y}`` but not
     ``{}`` -> ``{.x}``), and being lenient there is safer than rejecting a
@@ -122,7 +123,7 @@ def _brace_fields(text):
         _Invalid: For an unterminated field, or a ``!conversion``, which
             msgfmt doesn't support.
     """
-    fields = set()
+    fields = {}
     position = 0
     i = 0
     while True:
@@ -156,7 +157,7 @@ def _brace_fields(text):
         if re.match(r"[^.\[]*", field).group() == "":
             field = str(position)
             position += 1
-        fields.add(field)
+        fields.setdefault(field, set()).add(spec)
         i = end + 1
     return fields
 
@@ -199,12 +200,20 @@ def _check_brace(source, translation, may_omit):
         fields = _brace_fields(translation)
     except _Invalid as e:
         return str(e)
-    extra = sorted(fields - source_fields)
+    extra = sorted(fields.keys() - source_fields.keys())
     if extra:
         return f"fields not in the source: {', '.join('{' + f + '}' for f in extra)}"
-    missing = sorted(source_fields - fields)
+    missing = sorted(source_fields.keys() - fields.keys())
     if missing and not may_omit:
         return f"missing fields: {', '.join('{' + f + '}' for f in missing)}"
+    # gettext 0.21 (Debian/Ubuntu) rejects any change to a field's format
+    # spec ("{a:.2f}" -> "{a:.3f}", or adding/dropping one); 1.0 allows
+    # some. Requiring the source's specs works with both.
+    changed = sorted(
+        field for field, specs in fields.items() if specs - source_fields[field]
+    )
+    if changed:
+        return f"a changed format spec for {', '.join('{' + f + '}' for f in changed)}"
     return None
 
 
