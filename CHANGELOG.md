@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.6.0] - 2026-10-02
 
 ### Changed
 
@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - litellm 1.100.3 or newer is required on Python 3.11+. Older releases drop `reasoning_effort` for `gpt-6-luna`.
 - No litellm release includes `gpt-6-luna` in its bundled model list yet; litellm downloads the current list when it's imported. Offline, or with `LITELLM_LOCAL_MODEL_COST_MAP=True`, the token limits of `gpt-6-luna` can't be looked up and batches fall back to 8192 input / 4096 output tokens, which means more API requests per run.
 - README: the "under $0.01 per language" cost estimate is removed. It was measured with `gpt-4o-mini`.
+- README: leads with database content translation (django-modeltranslation), describes the 1.5.0 placeholder validation, gives `translate --models` its own setup example, and corrects which settings can come from environment variables (only the API key).
 
 ## [1.5.0] - 2026-10-02
 
@@ -514,6 +515,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[1.6.0]: https://github.com/gettranslatebot/translatebot-django/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/gettranslatebot/translatebot-django/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/gettranslatebot/translatebot-django/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/gettranslatebot/translatebot-django/compare/v1.3.4...v1.4.0
