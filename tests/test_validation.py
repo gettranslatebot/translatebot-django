@@ -343,8 +343,24 @@ CASES = [
         ["eine%(n).s Datei", "%(n)d Dateien"],
         False,
     ),
-    ("brace {.x} without a name", "en", BRACE, "Hello {}", None, "Hallo {.x}", False),
-    ("brace {[0]} without a name", "en", BRACE, "Hello {}", None, "Hallo {[0]}", False),
+    (
+        "brace {.x} without a name",
+        "en",
+        BRACE,
+        "Hello {name}",
+        None,
+        "Hallo {name} {.x}",
+        False,
+    ),
+    (
+        "brace {[0]} without a name",
+        "en",
+        BRACE,
+        "Hello {name}",
+        None,
+        "Hallo {name} {[0]}",
+        False,
+    ),
     (
         "brace plural nested {}",
         "en",
@@ -390,6 +406,54 @@ CASES = [
         ["eine%.0s Datei", "%d Dateien"],
         True,
     ),
+    # Sixth review round
+    ("brace nested chain kept", "en", BRACE, "{a:{b.c}}", None, "{a:{b.c}}", True),
+    (
+        "brace nested chain source, field dropped",
+        "en",
+        BRACE,
+        "{a:{b.c}}",
+        None,
+        "x",
+        False,
+    ),
+    (
+        "brace nested index source, renamed",
+        "en",
+        BRACE,
+        "{a:{b[0]}}",
+        None,
+        "{z}",
+        False,
+    ),
+    (
+        "brace nested numbered chain",
+        "en",
+        BRACE,
+        "{price:{width}} {a:{0.x}}",
+        None,
+        "{price:{width}}",
+        False,
+    ),
+    ("brace {a} -> {a:}", "en", BRACE, "{a}", None, "{a:}", False),
+    ("brace {a:} -> {a}", "en", BRACE, "{a:}", None, "{a}", False),
+    (
+        "brace literal {{ in spec, field dropped",
+        "en",
+        BRACE,
+        "{a:{{}",
+        None,
+        "x",
+        False,
+    ),
+    ("brace literal {{ in spec kept", "en", BRACE, "{a:{{} x", None, "{a:{{} y", True),
+    ("brace invalid name a-b in source", "en", BRACE, "{a-b}", None, "x", True),
+    ("brace non-ascii name in source", "en", BRACE, "{é}", None, "{e}", True),
+    ("brace numeric attr in source", "en", BRACE, "{a.0}", None, "x", True),
+    ("brace 0x name in source", "en", BRACE, "{0x}", None, "x", True),
+    ("brace spaced index in source", "en", BRACE, "{a[x y]}", None, "{a[z]}", True),
+    ("brace non-ascii fill in source", "en", BRACE, "{a:é<5}", None, "{a}", True),
+    ("brace invalid name in translation", "en", BRACE, "{a}", None, "{a} {b-c}", False),
 ]
 
 
@@ -400,10 +464,10 @@ CASES = [
 GETTEXT_1_0_RULES = {  # validator matches 1.0; 0.21 accepts or rejects
     "brace auto dropped",
     "brace auto dropped (2 -> 1)",
-    "brace {.x} without a name",
-    "brace {[0]} without a name",
 }
 GETTEXT_0_21_RULES = {  # validator matches 0.21; 1.0 accepts these
+    "brace {a} -> {a:}",
+    "brace {a:} -> {a}",
     "brace format spec",
     "brace nested spec dropped",
     "brace spec precision changed",
@@ -724,7 +788,7 @@ def test_still_failing_translation_is_left_untranslated(temp_locale_dir, mocker)
     assert result.strings_found == 3
     assert result.strings_translated == 1
     output = out.getvalue()
-    assert "Left '100%% free' untranslated" in output
+    assert "Skipped '100%% free'" in output
     assert "a lone '%'" in output
     assert "missing placeholders: name" in output
 

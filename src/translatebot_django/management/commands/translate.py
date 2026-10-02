@@ -1388,8 +1388,9 @@ class Command(BaseCommand):
             if unit.key in failing:
                 self.stdout.write(
                     self.style.WARNING(
-                        f"⚠️  Left {unit.msgid[:50]!r} untranslated: the "
-                        f"translation had {failing[unit.key]}, also on retry."
+                        f"⚠️  Skipped {unit.msgid[:50]!r}: the translation had "
+                        f"{failing[unit.key]}, also on retry. Nothing was written "
+                        "for it."
                     )
                 )
 

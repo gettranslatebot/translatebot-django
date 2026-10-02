@@ -10,9 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - PO translations are validated before they are written, using the rules `msgfmt --check-format` (run by `compilemessages`) applies to `python-format` and `python-brace-format` entries: named placeholders and `{fields}` must match the source and keep their type (`%(n)d` can't become `%(n)s`), positional `%s`/`%d` must match in number and order, and a literal percent sign must stay `%%`. A `{field}`'s format spec must stay as in the source (`{a:.2f}` can't become `{a:,.2f}` or `{a}`), which gettext 0.21 (Debian/Ubuntu) requires. Plural forms are checked against `msgid_plural` and may leave named placeholders out ("one file"), except in languages with a single form (ja, zh, …). Translations that are index markers (`#1`, `#2`, …) or empty are rejected too.
-- With DeepL, plural messages in single-form languages (ja, zh, …) get the plural translation in `msgstr[0]` instead of the singular, which lacked the count placeholder and broke `compilemessages`.
-- Rejected translations are retried once, on their own. If they fail again, the message is left untranslated with a warning, so it never breaks `compilemessages`; `check_translations` reports it and the next run tries again.
+- Rejected translations are retried once, on their own. If they fail again, the message isn't written and a warning is shown, so it never breaks `compilemessages`: an untranslated entry stays untranslated (`check_translations` reports it, and the next run tries again); with `--overwrite`, the existing translation is kept.
 - A response that fails validation as a whole (wrong number of translations, invalid JSON) is retried once before the run stops.
+
+### Fixed
+
+- Plural messages in single-form languages (ja, zh, …) get the plural translation in `msgstr[0]` when the singular and plural are translated as two strings (always with DeepL; with LLM providers when the PO file has no usable `Plural-Forms` header). It used to get the singular, which lacked the count placeholder and broke `compilemessages`.
 
 ## [1.4.1] - 2026-10-01
 

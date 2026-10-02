@@ -25,8 +25,16 @@ _TYPE_CLASSES = {
 # A python-brace-format spec as gettext accepts it: [[fill]align][sign][#][0]
 # [width][.precision][type]. Note: no "," / "_" grouping and no "s" type.
 _BRACE_SPEC_RE = re.compile(
-    r"(?:.?[<>=^])?[-+ ]?#?0?[0-9]*(?:\.[0-9]+)?[bcdeEfFgGnoxX%]?"
+    r"(?:[\x00-\x7f]?[<>=^])?[-+ ]?#?0?[0-9]*(?:\.[0-9]+)?[bcdeEfFgGnoxX%]?"
 )
+
+# A field name as gettext accepts it: an ASCII identifier or number, then
+# any .attribute (identifier) or [index] (ASCII letters, digits, _) parts
+_BRACE_BASE = r"(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+)"
+_BRACE_CHAIN = r"(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[A-Za-z0-9_]+\])*"
+_BRACE_NAME_RE = re.compile(f"{_BRACE_BASE}?{_BRACE_CHAIN}")
+# The whole spec may be one nested field, which needs a name: "{a:{w.x}}"
+_BRACE_NESTED_RE = re.compile(f"\\{{{_BRACE_BASE}{_BRACE_CHAIN}\\}}")
 
 # What a model sometimes returns instead of a translation: "#1", "#2", ...
 _INDEX_MARKER_RE = re.compile(r"^\s*#\d+\s*$")
@@ -158,6 +166,9 @@ def _brace_fields(text):
         depth = 0
         end = i + 1
         while end < len(text):
+            if text.startswith("{{", end):
+                end += 2  # literal braces inside a spec, not nesting
+                continue
             if text[end] == "{":
                 depth += 1
             elif text[end] == "}":
@@ -167,18 +178,19 @@ def _brace_fields(text):
             end += 1
         else:
             raise _Invalid("an unterminated {field}")
-        field, _, spec = text[i + 1 : end].partition(":")
-        if "{" in spec:
-            # One nested field as the whole spec ("{a:{w}}") is allowed
-            if (
-                not re.fullmatch(r"\{(?:[A-Za-z_]\w*|[0-9]+)\}", spec)
-                and "{{" not in spec
-            ):
-                raise _Invalid(f"a nested {{{field}:{spec}}} gettext doesn't support")
-        elif not _BRACE_SPEC_RE.fullmatch(spec):
-            raise _Invalid(f"an invalid format spec in {{{field}:{spec}}}")
+        field, colon, spec = text[i + 1 : end].partition(":")
         if "!" in field:
             raise _Invalid(f"a {{{field}}} conversion, which gettext doesn't support")
+        if not _BRACE_NAME_RE.fullmatch(field):
+            raise _Invalid(f"an invalid field name {{{field}}}")
+        if "{" in spec.replace("{{", ""):
+            # One nested field as the whole spec ("{a:{w}}") is allowed
+            if not _BRACE_NESTED_RE.fullmatch(spec):
+                raise _Invalid(f"a nested {{{field}:{spec}}} gettext doesn't support")
+        elif "{{" not in spec and not _BRACE_SPEC_RE.fullmatch(spec):
+            raise _Invalid(f"an invalid format spec in {{{field}:{spec}}}")
+        # gettext 0.21 compares the directive text, so "{a}" and "{a:}" differ
+        spec = colon + spec
         name = re.match(r"[^.\[]*", field).group()
         if name == "" and field:
             raise _Invalid(f"a {{{field}}} field without a name")
