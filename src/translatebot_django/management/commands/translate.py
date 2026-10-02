@@ -943,7 +943,7 @@ class Command(BaseCommand):
             "--llm-model",
             default=None,
             help="LLM model name to use for this run, overriding TRANSLATEBOT_MODEL "
-            "(e.g. 'gpt-4o', 'claude-3-5-sonnet-20241022'). "
+            "(e.g. 'gpt-4o', 'claude-sonnet-5-5'). "
             "Not supported with the DeepL provider — raises an error if passed.",
         )
 
