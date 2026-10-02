@@ -672,6 +672,8 @@ class POUnit:
             it as a plain entry, which gets the singular form.
         plain_formats: The format flags of those plain entries, which decide
             how the singular is checked for them.
+        single_form: Whether some PO file of the message has a single plural
+            form, where msgfmt checks the only form strictly.
     """
 
     msgctxt: str | None
@@ -683,6 +685,7 @@ class POUnit:
     formats: frozenset = frozenset()
     has_plain: bool = False
     plain_formats: frozenset = frozenset()
+    single_form: bool = False
 
     @property
     def key(self):
@@ -711,8 +714,10 @@ class POUnit:
             self.msgid_plural = other.msgid_plural
             self.plural_forms = other.plural_forms
             self.nplurals = other.nplurals
+            self.single_form = other.single_form
             return
         self.formats |= other.formats
+        self.single_form |= other.single_form
         if other.plural_forms and len(other.plural_forms) > len(
             self.plural_forms or ()
         ):
@@ -735,7 +740,10 @@ class POUnit:
         forms = self.translation_from(results)
         for index, form in enumerate(forms):
             problem = translation_problem(
-                self.msgid_plural, form, self.formats, may_omit=self.nplurals > 1
+                self.msgid_plural,
+                form,
+                self.formats,
+                may_omit=self.nplurals > 1 and not self.single_form,
             )
             if problem:
                 return f"{problem} (plural form {index})"
@@ -843,16 +851,16 @@ def gather_entries(po_path, include_translated=False):
         key = (entry.msgctxt, entry.msgid)
         if key in units:
             continue
+        nplurals = len(plural_forms) if plural_forms else len(entry.msgstr_plural) or 2
         units[key] = POUnit(
             msgctxt=entry.msgctxt,
             msgid=entry.msgid,
             msgid_plural=entry.msgid_plural or None,
             comment=_entry_comment(entry),
             plural_forms=plural_forms,
-            nplurals=(
-                len(plural_forms) if plural_forms else len(entry.msgstr_plural) or 2
-            ),
+            nplurals=nplurals,
             formats=frozenset(entry.flags) & FORMAT_FLAGS,
+            single_form=bool(entry.msgid_plural) and nplurals == 1,
         )
 
     return list(units.values())

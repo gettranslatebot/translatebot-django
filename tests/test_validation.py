@@ -454,6 +454,70 @@ CASES = [
     ("brace spaced index in source", "en", BRACE, "{a[x y]}", None, "{a[z]}", True),
     ("brace non-ascii fill in source", "en", BRACE, "{a:é<5}", None, "{a}", True),
     ("brace invalid name in translation", "en", BRACE, "{a}", None, "{a} {b-c}", False),
+    # Seventh review round
+    (
+        "brace auto source, spec changed",
+        "en",
+        BRACE,
+        "{:.1f} MB",
+        None,
+        "{:.2f} MB",
+        True,
+    ),
+    ("brace auto source, spec dropped", "en", BRACE, "{:.1f} MB", None, "{} MB", True),
+    (
+        "brace auto source, mixed specs",
+        "en",
+        BRACE,
+        "{} of {:.1f}",
+        None,
+        "{} von {}",
+        True,
+    ),
+    ("brace auto source, align dropped", "en", BRACE, "{:>5}", None, "{}", True),
+    (
+        "brace plural {{ with more",
+        "en",
+        BRACE,
+        "{a} file",
+        "{a} files",
+        ["{a:x{{} f", "{a} fs"],
+        False,
+    ),
+    (
+        "brace plural {{5",
+        "en",
+        BRACE,
+        "{a} file",
+        "{a} files",
+        ["{a:{{5} f", "{a} fs"],
+        False,
+    ),
+    ("brace {{5 source is invalid", "en", BRACE, "{a:{{5}", None, "{a:{{6}", True),
+    ("brace {{5 source, field dropped", "en", BRACE, "{a:{{5}", None, "x", True),
+    (
+        "brace bare . source, field dropped",
+        "en",
+        BRACE,
+        "{a:.f} total",
+        None,
+        "Summe",
+        False,
+    ),
+    ("brace bare . source, renamed", "en", BRACE, "{a:.}", None, "{b:.}", False),
+    ("brace bare . kept", "en", BRACE, "{a:.f} x", None, "{a:.f} y", True),
+    ("brace bare . added", "en", BRACE, "{a} x", None, "{a:.} y", False),
+    (
+        "brace plural bare . added",
+        "en",
+        BRACE,
+        "{n} file",
+        "{n} files",
+        ["{n:.} Datei", "{n} Dateien"],
+        False,
+    ),
+    ("brace index [0a] source is invalid", "en", BRACE, "{a[0a]}", None, "x", True),
+    ("brace index [a0] kept", "en", BRACE, "{a[a0]} x", None, "{a[a0]} y", True),
 ]
 
 
@@ -462,10 +526,13 @@ CASES = [
 # numbering and format specs; the validator takes the stricter rule of the
 # two, so a translation it accepts compiles with either.
 GETTEXT_1_0_RULES = {  # validator matches 1.0; 0.21 accepts or rejects
+    "brace plural bare . added",
     "brace auto dropped",
     "brace auto dropped (2 -> 1)",
 }
 GETTEXT_0_21_RULES = {  # validator matches 0.21; 1.0 accepts these
+    "brace bare . source, field dropped",
+    "brace bare . source, renamed",
     "brace {a} -> {a:}",
     "brace {a:} -> {a}",
     "brace format spec",
@@ -867,3 +934,34 @@ def test_failing_retry_request_keeps_the_valid_translations(temp_locale_dir, moc
         "",
         "Hallo %(name)s",
     ]
+
+
+def test_absorb_keeps_single_form_strictness():
+    """Merged files with nplurals=1 and nplurals=2: the single-form file is
+    checked strictly by msgfmt, so placeholders can't be left out."""
+    POUnit = translate_module.POUnit
+    two = POUnit(
+        None,
+        "{n} file",
+        "{n} files",
+        formats=BRACE,
+        nplurals=2,
+        plural_forms=("1", "0, 2"),
+    )
+    one = POUnit(
+        None,
+        "{n} file",
+        "{n} files",
+        formats=BRACE,
+        nplurals=1,
+        plural_forms=("0, 1",),
+        single_form=True,
+    )
+    two.absorb(one)
+    assert two.single_form and two.nplurals == 2
+    assert "missing fields: {n}" in two.problem([["1ファイル", "{n} ファイル"]])
+    assert two.problem([["{n} ファイル", "{n} ファイル"]]) is None
+
+    plain = POUnit(None, "{n} file")
+    plain.absorb(one)
+    assert plain.single_form

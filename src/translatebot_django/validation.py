@@ -4,8 +4,10 @@ They mirror what ``msgfmt --check-format`` (GNU gettext, run by
 ``compilemessages``) rejects for ``python-format`` and
 ``python-brace-format`` entries, so a translation that would break
 compilation is caught before it is written, and add a check for degenerate
-output (index markers instead of text). The rules were confirmed against
-gettext 1.0; see tests/test_validation.py.
+output (index markers instead of text). Where gettext 0.21 (common on
+Debian/Ubuntu) and 1.0 disagree, the stricter rule is used, so an accepted
+translation compiles with either; tests/test_validation.py cross-checks
+every rule against the installed msgfmt.
 """
 
 import re
@@ -24,14 +26,17 @@ _TYPE_CLASSES = {
 
 # A python-brace-format spec as gettext accepts it: [[fill]align][sign][#][0]
 # [width][.precision][type]. Note: no "," / "_" grouping and no "s" type.
-_BRACE_SPEC_RE = re.compile(
-    r"(?:[\x00-\x7f]?[<>=^])?[-+ ]?#?0?[0-9]*(?:\.[0-9]+)?[bcdeEfFgGnoxX%]?"
-)
+_BRACE_SPEC = r"(?:[\x00-\x7f]?[<>=^])?[-+ ]?#?0?[0-9]*(?:\.[0-9]{})?[bcdeEfFgGnoxX%]?"
+# gettext 0.21 also accepts a "." without digits ("{a:.f}"); 1.0 doesn't.
+# Such specs are parsed (0.21 compares them), but a translation may only use
+# one the source has (see _check_brace).
+_BRACE_SPEC_RE = re.compile(_BRACE_SPEC.format("*"))
+_BRACE_SPEC_1_0_RE = re.compile(_BRACE_SPEC.format("+"))
 
 # A field name as gettext accepts it: an ASCII identifier or number, then
 # any .attribute (identifier) or [index] (ASCII letters, digits, _) parts
 _BRACE_BASE = r"(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+)"
-_BRACE_CHAIN = r"(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[A-Za-z0-9_]+\])*"
+_BRACE_CHAIN = r"(?:\.[A-Za-z_][A-Za-z0-9_]*|\[(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+)\])*"
 _BRACE_NAME_RE = re.compile(f"{_BRACE_BASE}?{_BRACE_CHAIN}")
 # The whole spec may be one nested field, which needs a name: "{a:{w.x}}"
 _BRACE_NESTED_RE = re.compile(f"\\{{{_BRACE_BASE}{_BRACE_CHAIN}\\}}")
@@ -183,11 +188,13 @@ def _brace_fields(text):
             raise _Invalid(f"a {{{field}}} conversion, which gettext doesn't support")
         if not _BRACE_NAME_RE.fullmatch(field):
             raise _Invalid(f"an invalid field name {{{field}}}")
-        if "{" in spec.replace("{{", ""):
+        if spec == "{{":
+            pass  # a literal "{" as the whole spec
+        elif "{" in spec:
             # One nested field as the whole spec ("{a:{w}}") is allowed
             if not _BRACE_NESTED_RE.fullmatch(spec):
                 raise _Invalid(f"a nested {{{field}:{spec}}} gettext doesn't support")
-        elif "{{" not in spec and not _BRACE_SPEC_RE.fullmatch(spec):
+        elif not _BRACE_SPEC_RE.fullmatch(spec):
             raise _Invalid(f"an invalid format spec in {{{field}:{spec}}}")
         # gettext 0.21 compares the directive text, so "{a}" and "{a:}" differ
         spec = colon + spec
@@ -253,6 +260,12 @@ def _check_brace(source, translation, may_omit):
         fields, auto = _brace_fields(translation)
     except _Invalid as e:
         return str(e)
+    for field, specs in fields.items():
+        for spec in specs - source_fields.get(field, set()):
+            # A spec 1.0 rejects ("{a:.f}") only passes when the source has it;
+            # spec is ":" + the spec text, or "" without a colon
+            if "{" not in spec and not _BRACE_SPEC_1_0_RE.fullmatch(spec[1:]):
+                return f"a format spec gettext 1.0 rejects in {{{field}{spec}}}"
     if auto and not source_auto:
         # gettext 0.21 rejects "{}" unless the source uses it too
         return "unnumbered {} fields, the source names or numbers them"
@@ -266,7 +279,9 @@ def _check_brace(source, translation, may_omit):
     # spec ("{a:.2f}" -> "{a:.3f}", or adding/dropping one); 1.0 allows
     # some. Requiring the source's specs works with both. Plural forms
     # aren't compared this strictly by msgfmt.
-    if may_omit:
+    if may_omit or source_auto:
+        # gettext 0.21 doesn't compare a source with unnumbered {} fields at
+        # all, and 1.0 allows spec changes, so only names are compared then
         return None
     changed = sorted(
         field for field, specs in fields.items() if specs != source_fields[field]
