@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `TRANSLATEBOT_MODEL` defaults to `gpt-5.4-nano` instead of `gpt-4o-mini`, which dates from July 2024. This only affects projects that don't set `TRANSLATEBOT_MODEL`. To keep the old model, set `TRANSLATEBOT_MODEL = "gpt-4o-mini"`.
+- README: the "under $0.01 per language" cost estimate is removed. It was measured with `gpt-4o-mini`.
+
 ## [1.5.0] - 2026-10-02
 
 ### Added
