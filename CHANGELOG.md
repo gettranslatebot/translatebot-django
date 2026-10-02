@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.5.0] - 2026-10-02
 
 ### Added
 
@@ -503,6 +503,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[1.5.0]: https://github.com/gettranslatebot/translatebot-django/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/gettranslatebot/translatebot-django/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/gettranslatebot/translatebot-django/compare/v1.3.4...v1.4.0
 [1.3.4]: https://github.com/gettranslatebot/translatebot-django/compare/v1.3.3...v1.3.4
