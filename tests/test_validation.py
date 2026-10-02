@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+from io import StringIO
 from unittest.mock import MagicMock
 
 import polib
@@ -832,16 +833,18 @@ def test_index_markers_are_retried(temp_locale_dir, mocker):
     ]
 
 
+def _entries(po_path):
+    return [(e.msgstr, e.fuzzy) for e in polib.pofile(str(po_path))]
+
+
 @pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
-def test_still_failing_translation_is_left_untranslated(temp_locale_dir, mocker):
+def test_still_failing_translation_is_written_fuzzy(temp_locale_dir, mocker):
     po_path = _write_po(temp_locale_dir / "de" / "LC_MESSAGES" / "django.po", ENTRIES)
     _responses(
         mocker,
         ["Weiterlesen", "100 % kostenlos", "Hallo"],
         ["100 % kostenlos", "Hallo"],
     )
-    from io import StringIO
-
     from translatebot_django import translate
 
     out = StringIO()
@@ -851,31 +854,180 @@ def test_still_failing_translation_is_left_untranslated(temp_locale_dir, mocker)
     )
     result = translate(target_langs="de")
 
-    assert [e.msgstr for e in polib.pofile(str(po_path))] == ["Weiterlesen", "", ""]
+    assert _entries(po_path) == [
+        ("Weiterlesen", False),
+        ("100 % kostenlos", True),
+        ("Hallo", True),
+    ]
     assert result.strings_found == 3
     assert result.strings_translated == 1
+    assert result.strings_rejected == 2
     output = out.getvalue()
-    assert "Skipped '100%% free'" in output
-    assert "a lone '%'" in output
-    assert "missing placeholders: name" in output
+    assert "Rejected '100%% free'" in output
+    assert "Marked fuzzy 'Hello %(name)s'" in output
+    # The summary comes last, after the per-file report
+    summary = output[output.index("2 translation(s) failed validation") :]
+    assert f"  {po_path}\n    '100%% free' (marked fuzzy): a lone '%'" in summary
+    assert "'Hello %(name)s' (marked fuzzy): missing placeholders: name" in summary
+
+
+@pytest.mark.skipif(shutil.which("msgfmt") is None, reason="gettext not installed")
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_fuzzy_drafts_pass_msgfmt(temp_locale_dir, mocker):
+    po_path = _write_po(temp_locale_dir / "de" / "LC_MESSAGES" / "django.po", ENTRIES)
+    _responses(
+        mocker,
+        ["Weiterlesen", "100 % kostenlos", "Hallo"],
+        ["100 % kostenlos", "Hallo"],
+    )
+
+    call_command("translate", target_lang="de")
+
+    result = subprocess.run(
+        ["msgfmt", "--check-format", "-o", os.devnull, str(po_path)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
-def test_invalid_retry_response_leaves_entries_untranslated(temp_locale_dir, mocker):
+def test_rejected_translation_never_replaces_a_translation(temp_locale_dir, mocker):
+    """With --overwrite, a rejected translation keeps the existing one; an
+    existing fuzzy translation isn't replaced by a draft either."""
+    po_path = _write_po(
+        temp_locale_dir / "de" / "LC_MESSAGES" / "django.po",
+        [
+            polib.POEntry(
+                msgid="100%% free", msgstr="100%% gratis", flags=["python-format"]
+            ),
+            polib.POEntry(
+                msgid="Hello %(name)s",
+                msgstr="Hallo %(name)s!",
+                flags=["python-format", "fuzzy"],
+            ),
+        ],
+    )
+    _responses(
+        mocker,
+        ["100 % kostenlos", "Hallo"],
+        ["100 % kostenlos", "Hallo"],
+    )
+    out = StringIO()
+
+    call_command("translate", target_lang="de", overwrite=True, stdout=out)
+
+    assert _entries(po_path) == [("100%% gratis", False), ("Hallo %(name)s!", True)]
+    assert "'100%% free' (marked fuzzy)" not in out.getvalue()
+    assert "'100%% free' (not written)" in out.getvalue()
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_index_marker_and_empty_drafts_are_not_written(temp_locale_dir, mocker):
+    po_path = _write_po(temp_locale_dir / "ja" / "LC_MESSAGES" / "django.po", ENTRIES)
+    _responses(mocker, ["#1", "", "#3"], ["#1", "", "#3"])
+
+    result = call_command("translate", target_lang="ja", stdout=StringIO())
+
+    assert result is None
+    assert _entries(po_path) == [("", False)] * 3
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_fuzzy_draft_is_translated_again_next_run(temp_locale_dir, mocker):
+    po_path = _write_po(temp_locale_dir / "de" / "LC_MESSAGES" / "django.po", ENTRIES)
+    _responses(
+        mocker,
+        ["Weiterlesen", "100 % kostenlos", "Hallo %(name)s"],
+        ["100 % kostenlos"],
+        ["100%% kostenlos"],
+    )
+
+    call_command("translate", target_lang="de")
+    assert _entries(po_path)[1] == ("100 % kostenlos", True)
+    call_command("translate", target_lang="de")
+
+    assert _entries(po_path)[1] == ("100%% kostenlos", False)
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_draft_never_replaces_a_partly_translated_plural(temp_locale_dir, mocker):
+    path = temp_locale_dir / "de" / "LC_MESSAGES" / "django.po"
+    po_path = _write_po(
+        path,
+        [
+            polib.POEntry(
+                msgid="%(n)d file",
+                msgid_plural="%(n)d files",
+                msgstr_plural={0: "%(n)d Datei", 1: ""},
+                flags=["python-format"],
+            )
+        ],
+    )
+    po = polib.pofile(str(po_path))
+    po.metadata["Plural-Forms"] = "nplurals=2; plural=(n != 1);"
+    po.save(str(po_path))
+    bad = [["%(x)d Datei", "%(x)d Dateien"]]
+    _responses(mocker, bad, bad)
+
+    call_command("translate", target_lang="de", stdout=StringIO())
+
+    entry = polib.pofile(str(po_path))[0]
+    assert entry.msgstr_plural == {0: "%(n)d Datei", 1: ""}
+    assert not entry.fuzzy
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_rejected_are_counted_per_file(temp_locale_dir, mocker):
+    """Like strings_found: a message in two files is rejected in both."""
+    from translatebot_django import translate
+
+    for domain in ("django", "djangojs"):
+        _write_po(temp_locale_dir / "de" / "LC_MESSAGES" / f"{domain}.po", ENTRIES)
+    _responses(
+        mocker,
+        ["Weiterlesen", "100 % kostenlos", "Hallo %(name)s"],
+        ["100 % kostenlos"],
+    )
+    mocker.patch(
+        "translatebot_django.api.call_command",
+        side_effect=lambda cmd, **kw: call_command(cmd, stdout=StringIO(), **kw),
+    )
+
+    result = translate(target_langs="de")
+
+    assert result.strings_found == 6
+    assert result.strings_translated == 4
+    assert result.strings_rejected == 2
+
+
+def test_plural_draft():
+    POUnit = translate_module.POUnit
+    unit = POUnit(None, "%(n)d file", "%(n)d files", formats=PY, nplurals=1)
+    assert unit.draft_from(["1 Datei", "%(n)d Dateien"]) == ["%(n)d Dateien"]
+    assert unit.draft_from(["1 Datei", "#2"]) is None
+    assert unit.draft_from(["not a list"]) is None
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_invalid_retry_response_writes_the_first_draft(temp_locale_dir, mocker):
     po_path = _write_po(temp_locale_dir / "de" / "LC_MESSAGES" / "django.po", ENTRIES)
     _responses(
         mocker,
         ["Weiterlesen", "100 % kostenlos", "Hallo %(name)s"],
         ["one", "too many"],
     )
+    out = StringIO()
 
-    call_command("translate", target_lang="de")
+    call_command("translate", target_lang="de", stdout=out)
 
-    assert [e.msgstr for e in polib.pofile(str(po_path))] == [
-        "Weiterlesen",
-        "",
-        "Hallo %(name)s",
+    assert _entries(po_path) == [
+        ("Weiterlesen", False),
+        ("100 % kostenlos", True),
+        ("Hallo %(name)s", False),
     ]
+    # The summary names the draft's problem, not the retry's response
+    assert "(marked fuzzy): a lone '%'" in out.getvalue()
 
 
 @pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
