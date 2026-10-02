@@ -250,7 +250,7 @@ CASES = [
     ("brace auto attr dropped", "en", BRACE, "{} {.x}", None, "{} {}", True),
     ("brace auto dropped (2 -> 1)", "en", BRACE, "{} {}", None, "{}", False),
     ("brace numbered attr dropped", "en", BRACE, "{0.x}", None, "{0}", False),
-    ("brace numbered -> auto", "en", BRACE, "{0} {1}", None, "{} {}", True),
+    ("brace numbered -> auto", "en", BRACE, "{0} {1}", None, "{} {}", False),
     ("brace auto -> numbered", "en", BRACE, "{} {}", None, "{1} {0}", True),
     ("brace field repeated", "en", BRACE, "{a.b}", None, "{a.b} {a.b}", True),
     # Third review round
@@ -281,6 +281,58 @@ CASES = [
     ("brace doubly nested", "en", BRACE, "{a}", None, "{a:{b:c}}", False),
     ("brace nested whole spec", "en", BRACE, "{a}", None, "{a:{w}}", False),
     ("brace nested in source", "en", BRACE, "{a:>{w}}", None, "{a}", True),
+    # Fourth review round
+    ("brace auto added to numbered", "en", BRACE, "{0} {b}", None, "{0} {b} {}", False),
+    ("brace numbered -> auto (one)", "en", BRACE, "{0}", None, "{}", False),
+    (
+        "brace repeated field, spec dropped",
+        "en",
+        BRACE,
+        "{a:.2f} ({a})",
+        None,
+        "{a}",
+        False,
+    ),
+    (
+        "brace repeated field kept",
+        "en",
+        BRACE,
+        "{a:.2f} ({a})",
+        None,
+        "({a}) {a:.2f}",
+        True,
+    ),
+    (
+        "brace plural spec added",
+        "en",
+        BRACE,
+        "{n} file",
+        "{n} files",
+        ["{n:>3} Datei", "{n:>3} Dateien"],
+        True,
+    ),
+    ("%.0s is its own type", "en", PY, "%.0s%s x", None, "%s%s y", False),
+    ("%.0s kept", "en", PY, "%.0s%s x", None, "%.0s%s y", True),
+    (
+        "plural %(n).0s for %(n)d",
+        "en",
+        PY,
+        "%(n)d file",
+        "%(n)d files",
+        ["%(n).0seine Datei", "%(n)d Dateien"],
+        True,
+    ),
+    ("named %(x)% in source", "en", PY, "%(x)% %(y)s", None, "%(x)%", False),
+    ("nested parens in name", "en", PY, "%(a(b))s %(c)s", None, "%(a(b))s", False),
+    (
+        "nested parens in name kept",
+        "en",
+        PY,
+        "%(a(b))s %(c)s",
+        None,
+        "%(c)s %(a(b))s",
+        True,
+    ),
 ]
 
 
@@ -291,7 +343,6 @@ CASES = [
 GETTEXT_1_0_RULES = {  # validator matches 1.0; 0.21 accepts or rejects
     "brace auto dropped",
     "brace auto dropped (2 -> 1)",
-    "brace numbered -> auto",
 }
 GETTEXT_0_21_RULES = {  # validator matches 0.21; 1.0 accepts these
     "brace format spec",
@@ -303,6 +354,9 @@ GETTEXT_0_21_RULES = {  # validator matches 0.21; 1.0 accepts these
     "brace spec fill",
     "brace spec full",
     "brace nested whole spec",
+    "brace numbered -> auto",
+    "brace numbered -> auto (one)",
+    "brace repeated field, spec dropped",
 }
 
 
@@ -401,7 +455,11 @@ def test_problem_descriptions():
     assert "two different types" in translation_problem("%(n)d", "%(n)s %(n)d", PY)
     assert "mixed" in translation_problem("%(n)d", "%(n)d %s", PY)
     assert "lone" in translation_problem("%(n)d", "%(n", PY)
-    assert "invalid placeholder %(x)%" in translation_problem("%s", "%s %(x)%", PY)
+    assert "mixed" in translation_problem("%s", "%s %(x)%", PY)
+    assert "unnumbered {} fields" in translation_problem("{0}", "{}", BRACE)
+    assert "both numbered {0} and unnumbered {}" in translation_problem(
+        "{} {}", "{0} {}", BRACE
+    )
     assert "invalid format spec in {a:,.2f}" in translation_problem(
         "{a:.2f}", "{a:,.2f}", BRACE
     )
@@ -445,12 +503,33 @@ def test_po_unit_problem():
     assert plural.problem(["not a list"]) == "not a list of plural forms"
     assert "(plural form 1)" in plural.problem([["plik", "100 %", "x"]])
 
-    # The singular goes to plain entries of the same message: strict there
+    # The singular goes to plain entries of the same message: strict there,
+    # with the plain entries' own format flags
     plural.has_plain = True
+    assert plural.problem([["plik", "%(n)d pliki", "%(n)d plików"]]) is None
+    plural.plain_formats = PY
     assert "(singular, for a non-plural entry)" in plural.problem(
         [["plik", "%(n)d pliki", "%(n)d plików"]]
     )
     assert plural.problem([["%(n)d plik", "%(n)d pliki", "%(n)d plików"]]) is None
+
+
+def test_single_form_plain_duplicate_without_flag_is_not_checked():
+    """ja + plural-aware provider: the only form "%(n)d ファイル" also goes
+    to an unflagged plain "One file" entry, which msgfmt doesn't check."""
+    POUnit = translate_module.POUnit
+    unit = POUnit(None, "One file")
+    unit.absorb(
+        POUnit(
+            None,
+            "One file",
+            "%(n)d files",
+            formats=PY,
+            nplurals=1,
+            plural_forms=("0, 1, 2",),
+        )
+    )
+    assert unit.problem([["%(n)d ファイル"]]) is None
 
 
 def test_two_string_mode_single_form_language_gets_the_plural():
@@ -468,11 +547,17 @@ def test_absorb_tracks_plain_duplicates():
     POUnit = translate_module.POUnit
     plain_first = POUnit(None, "Item")
     plain_first.absorb(POUnit(None, "Item", "Items", formats=PY))
-    assert plain_first.has_plain and plain_first.formats == PY
+    assert plain_first.has_plain
+    assert (plain_first.formats, plain_first.plain_formats) == (PY, frozenset())
 
-    plural_first = POUnit(None, "Item", "Items")
+    plural_first = POUnit(None, "Item", "Items", formats=PY)
     plural_first.absorb(POUnit(None, "Item"))
     assert plural_first.has_plain
+    assert (plural_first.formats, plural_first.plain_formats) == (PY, frozenset())
+
+    plain_merged = POUnit(None, "Item")
+    plain_merged.absorb(POUnit(None, "Item", formats=PY))
+    assert not plain_merged.has_plain and plain_merged.formats == PY
 
     only_plural = POUnit(None, "Item", "Items")
     only_plural.absorb(POUnit(None, "Item", "Items"))
@@ -628,3 +713,34 @@ def test_invalid_batch_response_twice_stops_the_run(temp_locale_dir, mocker):
     with pytest.raises(CommandError, match="Failed to parse JSON"):
         call_command("translate", target_lang="nl")
     assert mock.call_count == 2
+
+
+@pytest.mark.usefixtures("mock_env_api_key", "mock_model_config")
+def test_failing_retry_request_keeps_the_valid_translations(temp_locale_dir, mocker):
+    """Review finding: an API error on the retry used to lose the whole batch,
+    while the error message said completed translations were saved."""
+    from litellm.exceptions import BadRequestError
+
+    from django.core.management.base import CommandError
+
+    po_path = _write_po(temp_locale_dir / "de" / "LC_MESSAGES" / "django.po", ENTRIES)
+    good = MagicMock()
+    good.choices[0].message.content = json.dumps(
+        ["Weiterlesen", "100 % kostenlos", "Hallo %(name)s"]
+    )
+    mocker.patch(
+        "translatebot_django.management.commands.translate.completion",
+        side_effect=[
+            good,
+            BadRequestError(message="boom", llm_provider="openai", model="m"),
+        ],
+    )
+
+    with pytest.raises(CommandError, match="API request failed"):
+        call_command("translate", target_lang="de")
+
+    assert [e.msgstr for e in polib.pofile(str(po_path))] == [
+        "Weiterlesen",
+        "",
+        "Hallo %(name)s",
+    ]

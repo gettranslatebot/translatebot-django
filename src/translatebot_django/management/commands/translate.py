@@ -670,6 +670,8 @@ class POUnit:
             translation are checked.
         has_plain: For a pluralized message, whether some PO file also has
             it as a plain entry, which gets the singular form.
+        plain_formats: The format flags of those plain entries, which decide
+            how the singular is checked for them.
     """
 
     msgctxt: str | None
@@ -680,6 +682,7 @@ class POUnit:
     nplurals: int = 2
     formats: frozenset = frozenset()
     has_plain: bool = False
+    plain_formats: frozenset = frozenset()
 
     @property
     def key(self):
@@ -694,17 +697,23 @@ class POUnit:
         """
         if other.comment:
             self.comment = other.comment
-        self.formats |= other.formats
         if other.msgid_plural is None:
-            if self.msgid_plural is not None:
+            if self.msgid_plural is None:
+                self.formats |= other.formats
+            else:
                 self.has_plain = True
+                self.plain_formats |= other.formats
             return
         if self.msgid_plural is None:
             self.has_plain = True
+            self.plain_formats = self.formats
+            self.formats = other.formats
             self.msgid_plural = other.msgid_plural
             self.plural_forms = other.plural_forms
             self.nplurals = other.nplurals
-        elif other.plural_forms and len(other.plural_forms) > len(
+            return
+        self.formats |= other.formats
+        if other.plural_forms and len(other.plural_forms) > len(
             self.plural_forms or ()
         ):
             self.plural_forms = other.plural_forms
@@ -731,7 +740,9 @@ class POUnit:
             if problem:
                 return f"{problem} (plural form {index})"
         if self.has_plain:
-            problem = translation_problem(self.msgid, forms.singular, self.formats)
+            problem = translation_problem(
+                self.msgid, forms.singular, self.plain_formats
+            )
             if problem:
                 return f"{problem} (singular, for a non-plural entry)"
         return None
@@ -1316,17 +1327,20 @@ class Command(BaseCommand):
                 while done < len(units) and spans[done][1] <= len(results):
                     completed.append(done)
                     done += 1
-                self._check_and_record(
-                    [(units[u], range(*spans[u])) for u in completed],
-                    results,
-                    request,
-                    translations,
-                    provider,
-                )
-
-                # Save PO files after each batch so translations
-                # aren't lost if a later batch fails
-                self._save_po_translations(po_paths, translations, overwrite=overwrite)
+                try:
+                    self._check_and_record(
+                        [(units[u], range(*spans[u])) for u in completed],
+                        results,
+                        request,
+                        translations,
+                        provider,
+                    )
+                finally:
+                    # Save PO files after each batch so translations aren't
+                    # lost if a later batch (or this batch's retry) fails
+                    self._save_po_translations(
+                        po_paths, translations, overwrite=overwrite
+                    )
                 self.stdout.write(f"  💾 Saved batch {batch_num}/{len(groups)}")
 
     def _check_and_record(self, completed, results, request, translations, provider):
@@ -1344,7 +1358,17 @@ class Command(BaseCommand):
                     found[unit.key] = problem
             return found
 
+        def record(candidates):
+            for unit, span in candidates:
+                if unit.key not in failing:
+                    translations[unit.key] = unit.translation_from(
+                        [results[i] for i in span]
+                    )
+
         failing = problems(completed)
+        # Record the valid ones first, so a failing retry request can't
+        # lose them
+        record(completed)
         if failing:
             logger.warning(
                 "%d translation(s) from %s failed validation (e.g. %s), retrying...",
@@ -1358,18 +1382,15 @@ class Command(BaseCommand):
                 failing = problems(retry)
             except TranslationValidationError as e:
                 failing = dict.fromkeys(failing, f"an invalid response ({e})")
+            record(retry)
 
-        for unit, span in completed:
+        for unit, _ in completed:
             if unit.key in failing:
                 self.stdout.write(
                     self.style.WARNING(
                         f"⚠️  Left {unit.msgid[:50]!r} untranslated: the "
                         f"translation had {failing[unit.key]}, also on retry."
                     )
-                )
-            else:
-                translations[unit.key] = unit.translation_from(
-                    [results[i] for i in span]
                 )
 
     def _translate_model_fields(

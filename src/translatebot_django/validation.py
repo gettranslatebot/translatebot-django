@@ -54,6 +54,8 @@ def _percent_specs(text):
     *unnamed* lists the type classes of positional arguments in order
     (``*`` widths take an integer argument of their own).
 
+    ``%.0s`` has the type "any" and ``%(x)%`` the type "none", as in gettext.
+
     Raises:
         _Invalid: For a lone ``%``, an unknown conversion, ``*`` in a named
             conversion, a name used with two types, or named and unnamed
@@ -72,8 +74,13 @@ def _percent_specs(text):
             continue
         name = None
         if text.startswith("(", i):
-            end = text.find(")", i)
-            if end == -1:
+            # Names may contain balanced parentheses: %(a(b))s
+            depth = 0
+            for end in range(i, len(text)):
+                depth += {"(": 1, ")": -1}.get(text[end], 0)
+                if depth == 0:
+                    break
+            else:
                 raise _Invalid(_LONE_PERCENT)
             name = text[i + 1 : end]
             i = end + 1
@@ -81,22 +88,30 @@ def _percent_specs(text):
             i += 1
         stars = 0
         i, stars = _skip_width(text, i, stars)
+        precision = None
         if text.startswith(".", i):
-            i, stars = _skip_width(text, i + 1, stars)
+            start = i + 1
+            i, stars = _skip_width(text, start, stars)
+            precision = text[start:i]
         if i < len(text) and text[i] in "hlL":
             i += 1
         conv = text[i] if i < len(text) else ""
         i += 1
         if conv == "%":
-            # "%5%" or "% %" is a literal percent sign too, but a "*" in it
-            # still takes an argument; "%(x)%" is invalid
-            if name is not None:
-                raise _Invalid(f"an invalid placeholder %({name})%")
-            unnamed.extend(["integer"] * stars)
-            continue
-        if conv not in _TYPE_CLASSES:
+            if name is None:
+                # "%5%" or "% %" is a literal percent sign too, but a "*" in
+                # it still takes an argument
+                unnamed.extend(["integer"] * stars)
+                continue
+            # "%(x)%" consumes the argument x without a type
+            type_class = "none"
+        elif conv not in _TYPE_CLASSES:
             raise _Invalid(_LONE_PERCENT)
-        type_class = _TYPE_CLASSES[conv]
+        elif conv in "sr" and precision is not None and precision.strip("0") == "":
+            # "%.0s" prints nothing, so gettext accepts any argument type
+            type_class = "any"
+        else:
+            type_class = _TYPE_CLASSES[conv]
         if name is None:
             unnamed.extend(["integer"] * stars + [type_class])
         elif stars:
@@ -119,12 +134,15 @@ def _brace_fields(text):
     ``{}`` -> ``{.x}``), and being lenient there is safer than rejecting a
     valid translation. A lone ``}`` is literal.
 
+    Also returns whether unnumbered ``{}`` fields are used.
+
     Raises:
-        _Invalid: For an unterminated field, or a ``!conversion``, which
-            msgfmt doesn't support.
+        _Invalid: For an unterminated field, a ``!conversion`` (msgfmt doesn't
+            support those), or numbered and unnumbered fields mixed.
     """
     fields = {}
     position = 0
+    numbered = False
     i = 0
     while True:
         i = text.find("{", i)
@@ -154,12 +172,17 @@ def _brace_fields(text):
             raise _Invalid(f"an invalid format spec in {{{field}:{spec}}}")
         if "!" in field:
             raise _Invalid(f"a {{{field}}} conversion, which gettext doesn't support")
-        if re.match(r"[^.\[]*", field).group() == "":
+        name = re.match(r"[^.\[]*", field).group()
+        if name == "":
             field = str(position)
             position += 1
+        elif name.isdigit():
+            numbered = True
+        if position and numbered:
+            raise _Invalid("both numbered {0} and unnumbered {} fields")
         fields.setdefault(field, set()).add(spec)
         i = end + 1
-    return fields
+    return fields, position > 0
 
 
 def _check_percent(source, translation, may_omit):
@@ -179,7 +202,13 @@ def _check_percent(source, translation, may_omit):
     missing = sorted(set(source_named) - set(named))
     if missing and not may_omit:
         return f"missing placeholders: {', '.join(missing)}"
-    changed = sorted(n for n in named if named[n] != source_named[n])
+    changed = sorted(
+        n
+        for n in named
+        if named[n] != source_named[n]
+        # In plural forms msgfmt lets "%(n).0s" stand for any type
+        and not (may_omit and "any" in (named[n], source_named[n]))
+    )
     if changed:
         return f"placeholders with a different type: {', '.join(changed)}"
     if len(unnamed) != len(source_unnamed):
@@ -193,13 +222,16 @@ def _check_percent(source, translation, may_omit):
 
 def _check_brace(source, translation, may_omit):
     try:
-        source_fields = _brace_fields(source)
+        source_fields, source_auto = _brace_fields(source)
     except _Invalid:
         return None
     try:
-        fields = _brace_fields(translation)
+        fields, auto = _brace_fields(translation)
     except _Invalid as e:
         return str(e)
+    if auto and not source_auto:
+        # gettext 0.21 rejects "{}" unless the source uses it too
+        return "unnumbered {} fields, the source names or numbers them"
     extra = sorted(fields.keys() - source_fields.keys())
     if extra:
         return f"fields not in the source: {', '.join('{' + f + '}' for f in extra)}"
@@ -208,9 +240,12 @@ def _check_brace(source, translation, may_omit):
         return f"missing fields: {', '.join('{' + f + '}' for f in missing)}"
     # gettext 0.21 (Debian/Ubuntu) rejects any change to a field's format
     # spec ("{a:.2f}" -> "{a:.3f}", or adding/dropping one); 1.0 allows
-    # some. Requiring the source's specs works with both.
+    # some. Requiring the source's specs works with both. Plural forms
+    # aren't compared this strictly by msgfmt.
+    if may_omit:
+        return None
     changed = sorted(
-        field for field, specs in fields.items() if specs - source_fields[field]
+        field for field, specs in fields.items() if specs != source_fields[field]
     )
     if changed:
         return f"a changed format spec for {', '.join('{' + f + '}' for f in changed)}"
