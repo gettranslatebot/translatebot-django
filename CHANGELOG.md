@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `TRANSLATEBOT_MODEL` defaults to `gpt-6-luna` instead of `gpt-4o-mini`, which dates from July 2024. `gpt-6-luna` is newer and cheaper per token ($0.10 / $0.50 per million input / output tokens, against $0.15 / $0.60). This only affects projects that don't set `TRANSLATEBOT_MODEL`. To keep the old model, set `TRANSLATEBOT_MODEL = "gpt-4o-mini"`.
+- `gpt-6-luna` is a reasoning model, so requests to it are sent with `reasoning_effort="low"` and without `temperature`.
+- Python 3.10: set `TRANSLATEBOT_MODEL` explicitly (for example `TRANSLATEBOT_MODEL = "gpt-4o-mini"`). litellm is capped below 1.98 there, and those releases don't recognise `gpt-6-luna` as a reasoning model: they drop `reasoning_effort` and still send `temperature=0.2`, which reasoning models don't accept, so translation requests with the default model are expected to fail.
+- litellm 1.100.3 or newer is required on Python 3.11+. Older releases drop `reasoning_effort` for `gpt-6-luna`.
+- No litellm release includes `gpt-6-luna` in its bundled model list yet; litellm downloads the current list when it's imported. Offline, or with `LITELLM_LOCAL_MODEL_COST_MAP=True`, the token limits of `gpt-6-luna` can't be looked up and batches fall back to 8192 input / 4096 output tokens, which means more API requests per run.
+- README: the "under $0.01 per language" cost estimate is removed. It was measured with `gpt-4o-mini`.
+
 ## [1.5.0] - 2026-10-02
 
 ### Added

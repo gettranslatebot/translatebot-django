@@ -47,7 +47,7 @@ New content keeps arriving after you deploy, so the same function is available f
 
 - It works with OpenAI, Anthropic, Google Gemini, Azure and [any provider LiteLLM supports](https://docs.litellm.ai/docs/providers), or with [DeepL](https://www.deepl.com/).
 - One run covers every language in `LANGUAGES`. Adding a locale takes one line in your settings.
-- Strings are batched into as few API requests as possible. A typical app costs under $0.01 per language with GPT-4o-mini.
+- Strings are batched into as few API requests as possible.
 - `python manage.py check_translations` fails your CI build when strings are untranslated or fuzzy ([CI docs](https://translatebot.dev/docs/usage/ci/)).
 - You configure it in Django settings, and `--llm-model` overrides the model for a single run. The API key can also come from the `TRANSLATEBOT_API_KEY` environment variable.
 - The test suite covers 100% of the code.
@@ -96,8 +96,10 @@ LANGUAGES = [("en", "English"), ("nl", "Dutch"), ("de", "German")]
 
 TRANSLATEBOT_API_KEY = os.getenv("TRANSLATEBOT_API_KEY")
 # The default; any LiteLLM model works, e.g. "claude-sonnet-5-5"
-TRANSLATEBOT_MODEL = "gpt-4o-mini"
+TRANSLATEBOT_MODEL = "gpt-6-luna"
 ```
+
+On Python 3.10, set `TRANSLATEBOT_MODEL` to a model other than the default, such as `gpt-4o-mini`. The litellm versions that run there don't support `gpt-6-luna` properly.
 
 The API key must belong to the provider of `TRANSLATEBOT_MODEL`. To use DeepL instead, set `TRANSLATEBOT_PROVIDER = "deepl"`, put your DeepL key in `TRANSLATEBOT_API_KEY` and leave out `TRANSLATEBOT_MODEL`.
 

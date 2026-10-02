@@ -97,8 +97,8 @@ def test_get_model_from_settings(settings):
 
 
 def test_get_model_without_config():
-    """Test that get_model defaults to gpt-4o-mini when not configured."""
-    assert get_model() == "gpt-4o-mini"
+    """Test that get_model defaults to gpt-6-luna when not configured."""
+    assert get_model() == "gpt-6-luna"
 
 
 def test_get_modeltranslation_translator():
