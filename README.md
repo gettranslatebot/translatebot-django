@@ -99,6 +99,8 @@ TRANSLATEBOT_API_KEY = os.getenv("TRANSLATEBOT_API_KEY")
 TRANSLATEBOT_MODEL = "gpt-6-luna"
 ```
 
+On Python 3.10, set `TRANSLATEBOT_MODEL` to a model other than the default, such as `gpt-4o-mini`. The litellm versions that run there don't support `gpt-6-luna` properly.
+
 The API key must belong to the provider of `TRANSLATEBOT_MODEL`. To use DeepL instead, set `TRANSLATEBOT_PROVIDER = "deepl"`, put your DeepL key in `TRANSLATEBOT_API_KEY` and leave out `TRANSLATEBOT_MODEL`.
 
 ```bash
