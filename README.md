@@ -113,8 +113,29 @@ python manage.py translate
 
 # Compile for use
 python manage.py compilemessages
+```
 
-# Fill the empty language columns of your modeltranslation models
+### Model fields
+
+Model translation needs [django-modeltranslation](https://github.com/deschler/django-modeltranslation). Install the extra:
+
+```bash
+uv add "translatebot-django[modeltranslation]"
+```
+
+Add `modeltranslation` to `INSTALLED_APPS`, before `django.contrib.admin` if you use the admin:
+
+```python
+INSTALLED_APPS = [
+    "modeltranslation",
+    # ...
+    "translatebot_django",
+]
+```
+
+Once your fields are [registered for translation](https://django-modeltranslation.readthedocs.io/en/latest/registration.html) and migrated, fill their empty language columns:
+
+```bash
 python manage.py translate --models
 ```
 
