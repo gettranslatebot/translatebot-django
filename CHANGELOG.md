@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- Python 3.10 support. Python 3.10 reaches end of life in October 2026, and the security fix for filelock (GHSA-v4x8-3wr5-3wq8, pulled in via litellm and huggingface-hub) is only released for Python 3.11+. translatebot-django now requires Python 3.11 or newer.
+
+### Changed
+
+- The litellm `<1.98` cap for Python 3.10 is gone, so the default `gpt-6-luna` model works on every supported Python version without setting `TRANSLATEBOT_MODEL`.
+
 ## [1.6.0] - 2026-10-02
 
 ### Changed
@@ -515,6 +525,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
+[Unreleased]: https://github.com/gettranslatebot/translatebot-django/compare/v1.6.0...HEAD
 [1.6.0]: https://github.com/gettranslatebot/translatebot-django/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/gettranslatebot/translatebot-django/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/gettranslatebot/translatebot-django/compare/v1.4.0...v1.4.1

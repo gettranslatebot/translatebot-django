@@ -12,7 +12,7 @@ authors = [
 ]
 readme = "README.md"
 license = { text = "MPL-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Framework :: Django",
@@ -25,7 +25,6 @@ classifiers = [
   "Intended Audience :: Developers",
   "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -37,14 +36,9 @@ keywords = ["django", "translation", "i18n", "localization", "gettext", "po", "o
 dependencies = [
   "Django>=4.2,<7",
   "polib>=1.2.0,<2",
-  # litellm >= 1.98.0 fails to import on Python 3.10 (uses typing.NotRequired,
-  # which is 3.11+): https://github.com/BerriAI/litellm/issues/38076
-  # Drop the < 1.98 cap once that issue is fixed upstream.
   # litellm < 1.100.3 doesn't treat the default gpt-6-luna as a reasoning model:
-  # it drops reasoning_effort and still sends temperature, which reasoning models
-  # don't accept. Python 3.10 users must set TRANSLATEBOT_MODEL until the cap goes.
-  "litellm>=1.80.0,<1.98; python_version < '3.11'",
-  "litellm>=1.100.3,<2; python_version >= '3.11'",
+  # it drops reasoning_effort and still sends temperature.
+  "litellm>=1.100.3,<2",
 ]
 
 [project.urls]
@@ -105,8 +99,8 @@ exclude_lines = [
 ]
 
 [tool.ruff]
-# Target Python 3.10+
-target-version = "py310"
+# Target Python 3.11+
+target-version = "py311"
 
 # Include source and test files
 src = ["src", "tests"]
