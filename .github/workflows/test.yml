@@ -31,7 +31,7 @@ jobs:
       run: ruff format --check .
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # gettext 0.21; 26.04 ships 0.23, which breaks test_cases_match_msgfmt
     permissions:
       contents: read
       pull-requests: write
