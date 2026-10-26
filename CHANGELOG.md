@@ -525,7 +525,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for Django 4.2, 5.0, 5.1, 5.2, and 6.0
 - Support for Python 3.9 through 3.14
 
-[Unreleased]: https://github.com/gettranslatebot/translatebot-django/compare/v1.6.0...HEAD
 [1.7.0]: https://github.com/gettranslatebot/translatebot-django/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/gettranslatebot/translatebot-django/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/gettranslatebot/translatebot-django/compare/v1.4.1...v1.5.0
