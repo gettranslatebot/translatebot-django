@@ -38,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
         # Every entry is a "major.minor" series, so the "Django~=<series>.0" pin
         # below resolves within that series. A bare major such as "6" would pin
         # only the major and drift onto the next minor release.
@@ -55,12 +55,8 @@ jobs:
             extra-pins: "pytest-django<4.13"
         exclude:
           # Django 6.x requires Python 3.12+
-          - python-version: "3.10"
-            django-version: "6.0"
           - python-version: "3.11"
             django-version: "6.0"
-          - python-version: "3.10"
-            django-version: "6.1"
           - python-version: "3.11"
             django-version: "6.1"
           # Django 4.2 supports Python <= 3.12

@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/translatebot-django.svg)](https://pypi.org/project/translatebot-django/) [![Downloads](https://static.pepy.tech/badge/translatebot-django)](https://pepy.tech/project/translatebot-django) [![Tests](https://github.com/gettranslatebot/translatebot-django/actions/workflows/test.yml/badge.svg)](https://github.com/gettranslatebot/translatebot-django/actions/workflows/test.yml) [![Coverage](https://codecov.io/gh/gettranslatebot/translatebot-django/graph/badge.svg)](https://codecov.io/gh/gettranslatebot/translatebot-django) [![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
 
-[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](https://www.python.org/) [![Django](https://img.shields.io/badge/django-4.2%20%7C%205.0%20%7C%205.1%20%7C%205.2%20%7C%206.0%20%7C%206.1-green)](https://www.djangoproject.com/)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](https://www.python.org/) [![Django](https://img.shields.io/badge/django-4.2%20%7C%205.0%20%7C%205.1%20%7C%205.2%20%7C%206.0%20%7C%206.1-green)](https://www.djangoproject.com/)
 
 AI translation for Django, covering both your `.po` files and the content in your database. Run one command after each change and only the new text gets translated.
 
@@ -72,14 +72,14 @@ Optional extras: `translatebot-django[deepl]` for the [DeepL](https://translateb
 
 Each Django series is tested against the Python versions Django itself supports:
 
-| Django | Python |
-| ------ | ------------------------ |
-| 4.2    | 3.10, 3.11, 3.12         |
-| 5.0    | 3.10, 3.11, 3.12         |
-| 5.1    | 3.10, 3.11, 3.12, 3.13   |
-| 5.2    | 3.10, 3.11, 3.12, 3.13, 3.14 |
-| 6.0    | 3.12, 3.13, 3.14         |
-| 6.1    | 3.12, 3.13, 3.14         |
+| Django | Python                 |
+| ------ | ---------------------- |
+| 4.2    | 3.11, 3.12             |
+| 5.0    | 3.11, 3.12             |
+| 5.1    | 3.11, 3.12, 3.13       |
+| 5.2    | 3.11, 3.12, 3.13, 3.14 |
+| 6.0    | 3.12, 3.13, 3.14       |
+| 6.1    | 3.12, 3.13, 3.14       |
 
 ## Quick start
 
@@ -98,8 +98,6 @@ TRANSLATEBOT_API_KEY = os.getenv("TRANSLATEBOT_API_KEY")
 # The default; any LiteLLM model works, e.g. "claude-sonnet-5-5"
 TRANSLATEBOT_MODEL = "gpt-6-luna"
 ```
-
-On Python 3.10, set `TRANSLATEBOT_MODEL` to a model other than the default, such as `gpt-4o-mini`. The litellm versions that run there don't support `gpt-6-luna` properly.
 
 The API key must belong to the provider of `TRANSLATEBOT_MODEL`. To use DeepL instead, set `TRANSLATEBOT_PROVIDER = "deepl"`, put your DeepL key in `TRANSLATEBOT_API_KEY` and leave out `TRANSLATEBOT_MODEL`.
 
