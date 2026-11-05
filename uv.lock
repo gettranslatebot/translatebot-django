@@ -551,14 +551,14 @@ toml = [
 
 [[package]]
 name = "deepl"
-version = "1.32.0"
+version = "1.33.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d0/29/c54ffa32b73e91ca72f71be3ab282cb7d88521df96bc72865a3b75f33d17/deepl-1.32.0.tar.gz", hash = "sha256:3016bf86f1f53eb6e5fedb458746c6bf6579a840b57c54a2ed701b0344bc79e1", size = 68648, upload-time = "2026-08-13T12:58:46.587Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/68/1e/4b6e9fbf38831222f585716f29e95698e6cf872452ccc3057cbd5e6f62c8/deepl-1.33.0.tar.gz", hash = "sha256:ddec330fc7b617406131fed81137fd3bb43d1bae03ecbd48c8b8e9cb5851e303", size = 109590, upload-time = "2026-11-02T11:38:06.092Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/e0/8cbb7c17012cc9a7f896c8c7aedc79fb58840e827c927b16cbbf49b1e8e7/deepl-1.32.0-py3-none-any.whl", hash = "sha256:36f2faadc79a64712489bfeab32f344536eab25b3c38ea2e39a72084a71e0a7e", size = 60623, upload-time = "2026-08-13T12:58:45.231Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/76/d19edbd1b7e5efd4739aa9080898a1bc954d23e8a808fd11dc3c5be01094/deepl-1.33.0-py3-none-any.whl", hash = "sha256:68f59500c65998e3b6a250060820f3e3552b739314dde996375272f7aa27bf66", size = 94935, upload-time = "2026-11-02T11:38:04.817Z" },
 ]
 
 [[package]]
